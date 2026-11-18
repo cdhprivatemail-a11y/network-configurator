@@ -1,0 +1,443 @@
+{% extends "base.html" %}
+
+{% block title %}设备端口扫描与自动识别{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center">
+            <div>
+                <h3 class="fw-bold mb-1"><i class="bi bi-radar text-primary me-2"></i>设备扫描与自动识别</h3>
+                <p class="text-secondary mb-0">扫描本地端口或网段，自动探测开放端口并识别华为 eNSP (VRP) 和华三 HCL (Comware) 模拟器设备</p>
+            </div>
+            <div>
+                <button class="btn btn-outline-secondary me-2" onclick="resetForm()">
+                    <i class="bi bi-arrow-counterclockwise me-1"></i>重置
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 扫描设置与模式选择 -->
+<div class="row mb-4">
+    <div class="col-lg-4 mb-3 mb-lg-0">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-header bg-white border-0 pt-3">
+                <h5 class="card-title fw-bold mb-0"><i class="bi bi-sliders text-secondary me-2"></i>扫描模式</h5>
+            </div>
+            <div class="card-body">
+                <ul class="nav nav-pills nav-fill mb-3" id="scanModeTab" role="tablist">
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link active" id="quick-tab" data-bs-toggle="tab" data-bs-target="#quick-mode" type="button" role="tab">快速扫描</button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="custom-tab" data-bs-toggle="tab" data-bs-target="#custom-mode" type="button" role="tab">自定义扫描</button>
+                    </li>
+                </ul>
+
+                <div class="tab-content" id="scanModeTabContent">
+                    <!-- 快速扫描面板 -->
+                    <div class="tab-pane fade show active" id="quick-mode" role="tabpanel">
+                        <div class="alert alert-info py-2 small mb-3">
+                            <i class="bi bi-info-circle me-1"></i>
+                            针对 eNSP 和 HCL 常见的本地端口进行快速嗅探：
+                            <br>• 本地主机: <code>127.0.0.1</code>
+                            <br>• HCL Console 端口: <code>30000-30050</code> (如 30001, 30002...)
+                            <br>• eNSP Console/Telnet: <code>2000-2050</code>
+                            <br>• 映射 SSH: <code>3000-3050</code>
+                            <br>• 标准端口: <code>22, 23</code>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-semibold text-secondary">登录认证测试（可选）</label>
+                            <div class="input-group input-group-sm mb-2">
+                                <span class="input-group-text"><i class="bi bi-person"></i></span>
+                                <input type="text" class="form-control" id="quickUsername" placeholder="用户名 (默认留空尝试直连)">
+                            </div>
+                            <div class="input-group input-group-sm">
+                                <span class="input-group-text"><i class="bi bi-key"></i></span>
+                                <input type="password" class="form-control" id="quickPassword" placeholder="密码 (默认留空)">
+                            </div>
+                            <div class="form-text">若模拟器设备开启了 AAA 认证，提供凭据可提升识别准确率。</div>
+                        </div>
+                        <button class="btn btn-primary w-100" id="btnQuickScan" onclick="startQuickScan()">
+                            <i class="bi bi-play-circle me-1"></i>开始快速扫描
+                        </button>
+                    </div>
+
+                    <!-- 自定义扫描面板 -->
+                    <div class="tab-pane fade" id="custom-mode" role="tabpanel">
+                        <div class="mb-3">
+                            <label class="form-label small fw-semibold text-secondary">目标主机 / IP 范围</label>
+                            <input type="text" class="form-control form-control-sm" id="customHosts" value="127.0.0.1, 192.168.56.1-20" placeholder="例如: 127.0.0.1 或 192.168.56.1-50">
+                            <div class="form-text">支持单个IP、逗号隔开、连字符范围(1-50)或 /24 子网。</div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-semibold text-secondary">端口范围</label>
+                            <input type="text" class="form-control form-control-sm" id="customPorts" value="22, 23, 2000-2030" placeholder="例如: 22,23,2000-2050">
+                            <div class="form-text">常用端口: 22(SSH), 23(Telnet), 2000-2050(eNSP/HCL)。</div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-semibold text-secondary">登录认证测试（可选）</label>
+                            <div class="input-group input-group-sm mb-2">
+                                <span class="input-group-text"><i class="bi bi-person"></i></span>
+                                <input type="text" class="form-control" id="customUsername" placeholder="用户名">
+                            </div>
+                            <div class="input-group input-group-sm">
+                                <span class="input-group-text"><i class="bi bi-key"></i></span>
+                                <input type="password" class="form-control" id="customPassword" placeholder="密码">
+                            </div>
+                        </div>
+                        <div class="form-check form-switch mb-3">
+                            <input class="form-check-input" type="checkbox" id="customIdentify" checked>
+                            <label class="form-check-label small" for="customIdentify">发现开放端口后自动识别设备系统</label>
+                        </div>
+                        <button class="btn btn-primary w-100" id="btnCustomScan" onclick="startCustomScan()">
+                            <i class="bi bi-search me-1"></i>开始自定义扫描
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 扫描结果概览与快捷导入 -->
+    <div class="col-lg-8">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-header bg-white border-0 pt-3 d-flex justify-content-between align-items-center">
+                <h5 class="card-title fw-bold mb-0"><i class="bi bi-list-check text-secondary me-2"></i>扫描发现结果</h5>
+                <div class="d-flex gap-2">
+                    <button class="btn btn-sm btn-outline-primary" id="btnSelectAll" onclick="toggleSelectAllResults(true)" disabled>全选</button>
+                    <button class="btn btn-sm btn-outline-secondary" id="btnUnselectAll" onclick="toggleSelectAllResults(false)" disabled>取消</button>
+                    <button class="btn btn-sm btn-success" id="btnImportSelected" onclick="importSelectedDevices()" disabled>
+                        <i class="bi bi-plus-circle me-1"></i>添加到设备列表
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <!-- 状态与统计栏 -->
+                <div class="d-flex align-items-center justify-content-between p-2 mb-3 bg-light rounded border">
+                    <div class="d-flex align-items-center gap-3">
+                        <div class="spinner-border spinner-border-sm text-primary d-none" id="scanSpinner" role="status"></div>
+                        <span class="small fw-semibold text-secondary" id="scanStatusText">等待发起扫描</span>
+                    </div>
+                    <div class="d-flex gap-3 small">
+                        <div>开放端口: <span class="fw-bold text-primary" id="statOpenCount">0</span></div>
+                        <div>成功识别设备: <span class="fw-bold text-success" id="statIdentifiedCount">0</span></div>
+                    </div>
+                </div>
+
+                <!-- 结果列表表格 -->
+                <div class="table-responsive" style="max-height: 480px; overflow-y: auto;">
+                    <table class="table table-hover align-middle mb-0" id="scanResultTable">
+                        <thead class="table-light sticky-top">
+                            <tr>
+                                <th style="width: 40px;"><input type="checkbox" class="form-check-input" id="checkAllHead" onchange="toggleSelectAllResults(this.checked)" disabled></th>
+                                <th>主机地址</th>
+                                <th>端口</th>
+                                <th>服务/协议</th>
+                                <th>识别设备类型</th>
+                                <th>设备名称/主机名</th>
+                                <th>Banner / 响应</th>
+                                <th class="text-end">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="scanResultBody">
+                            <tr>
+                                <td colspan="8" class="text-center text-muted py-5">
+                                    <i class="bi bi-radar fs-1 d-block mb-2 text-secondary opacity-50"></i>
+                                    暂无扫描结果，请点击左侧按钮启动扫描
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 查看详细 Banner 模态框 -->
+<div class="modal fade" id="bannerModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold"><i class="bi bi-terminal me-2"></i>设备响应与 Banner 详情</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-2">
+                    <span class="badge bg-secondary me-2" id="modalHostPort"></span>
+                    <span class="badge bg-primary" id="modalDeviceType"></span>
+                </div>
+                <pre class="bg-dark text-light p-3 rounded" style="max-height: 400px; overflow: auto; font-family: monospace; font-size: 0.85rem;" id="modalBannerContent"></pre>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">关闭</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+let currentResults = [];
+
+function resetForm() {
+    document.getElementById('quickUsername').value = '';
+    document.getElementById('quickPassword').value = '';
+    document.getElementById('customUsername').value = '';
+    document.getElementById('customPassword').value = '';
+}
+
+function updateScanState(isScanning, message) {
+    const spinner = document.getElementById('scanSpinner');
+    const statusText = document.getElementById('scanStatusText');
+    const btnQuick = document.getElementById('btnQuickScan');
+    const btnCustom = document.getElementById('btnCustomScan');
+
+    if (isScanning) {
+        spinner.classList.remove('d-none');
+        btnQuick.disabled = true;
+        btnCustom.disabled = true;
+        statusText.textContent = message || '正在扫描中，请稍候...';
+    } else {
+        spinner.classList.add('d-none');
+        btnQuick.disabled = false;
+        btnCustom.disabled = false;
+        statusText.textContent = message || '扫描就绪';
+    }
+}
+
+async function startQuickScan() {
+    updateScanState(true, '正在执行本地快速端口嗅探与设备识别...');
+    const username = document.getElementById('quickUsername').value.trim();
+    const password = document.getElementById('quickPassword').value.trim();
+
+    try {
+        const res = await apiCall('/api/scan/quick', 'POST', { username, password });
+        if (res.success) {
+            renderScanResults(res.results || []);
+            showToast(`扫描完成！发现 ${res.total_open} 个开放端口，成功识别 ${res.total_identified} 台设备`, 'success');
+            updateScanState(false, `快速扫描完成 (发现: ${res.total_open}, 识别: ${res.total_identified})`);
+        } else {
+            showToast(res.error || '扫描失败', 'danger');
+            updateScanState(false, '扫描出错');
+        }
+    } catch (e) {
+        showToast('请求异常: ' + e.message, 'danger');
+        updateScanState(false, '请求失败');
+    }
+}
+
+async function startCustomScan() {
+    const hosts = document.getElementById('customHosts').value.trim();
+    const ports = document.getElementById('customPorts').value.trim();
+    const username = document.getElementById('customUsername').value.trim();
+    const password = document.getElementById('customPassword').value.trim();
+    const identify = document.getElementById('customIdentify').checked;
+
+    if (!hosts) {
+        showToast('请输入目标主机或 IP 范围', 'warning');
+        return;
+    }
+    if (!ports) {
+        showToast('请输入端口范围', 'warning');
+        return;
+    }
+
+    updateScanState(true, '正在扫描指定目标范围并进行探测...');
+
+    try {
+        const res = await apiCall('/api/scan/custom', 'POST', {
+            hosts, ports, username, password, identify
+        });
+        if (res.success) {
+            renderScanResults(res.results || []);
+            showToast(`扫描完成！共探测 ${res.total_scanned} 个端口，开放 ${res.total_open} 个，识别 ${res.total_identified} 台设备`, 'success');
+            updateScanState(false, `扫描完成 (开放: ${res.total_open}, 识别: ${res.total_identified})`);
+        } else {
+            showToast(res.error || '扫描失败', 'danger');
+            updateScanState(false, '扫描出错');
+        }
+    } catch (e) {
+        showToast('请求异常: ' + e.message, 'danger');
+        updateScanState(false, '请求失败');
+    }
+}
+
+function renderScanResults(results) {
+    currentResults = results;
+    const tbody = document.getElementById('scanResultBody');
+    const openCount = document.getElementById('statOpenCount');
+    const identifiedCount = document.getElementById('statIdentifiedCount');
+    const checkAllHead = document.getElementById('checkAllHead');
+    const btnSelectAll = document.getElementById('btnSelectAll');
+    const btnUnselectAll = document.getElementById('btnUnselectAll');
+    const btnImportSelected = document.getElementById('btnImportSelected');
+
+    openCount.textContent = results.length;
+    let identifiedNum = 0;
+
+    if (!results || results.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="8" class="text-center text-muted py-5">
+                    <i class="bi bi-slash-circle fs-1 d-block mb-2 text-secondary opacity-50"></i>
+                    未在该范围内发现任何开放的端口或设备
+                </td>
+            </tr>
+        `;
+        checkAllHead.disabled = true;
+        btnSelectAll.disabled = true;
+        btnUnselectAll.disabled = true;
+        btnImportSelected.disabled = true;
+        identifiedCount.textContent = 0;
+        return;
+    }
+
+    checkAllHead.disabled = false;
+    btnSelectAll.disabled = false;
+    btnUnselectAll.disabled = false;
+    btnImportSelected.disabled = false;
+
+    let rowsHtml = '';
+    results.forEach((item, index) => {
+        if (item.identified) identifiedNum++;
+
+        let badgeType = '<span class="badge bg-secondary">未知类型</span>';
+        if (item.device_type === 'huawei_vrp') {
+            badgeType = '<span class="badge bg-success"><i class="bi bi-hdd-network me-1"></i>华为 VRP</span>';
+        } else if (item.device_type === 'hp_comware') {
+            badgeType = '<span class="badge bg-primary"><i class="bi bi-hdd-network me-1"></i>H3C Comware</span>';
+        }
+
+        const isChecked = item.identified ? 'checked' : '';
+        const bannerShort = item.banner ? escapeHtml(item.banner.substring(0, 45).replace(/\r?\n|\r/g, ' ')) + (item.banner.length > 45 ? '...' : '') : '<span class="text-muted small">无回显</span>';
+
+        rowsHtml += `
+            <tr>
+                <td><input type="checkbox" class="form-check-input item-check" data-index="${index}" ${isChecked} onchange="updateImportBtnState()"></td>
+                <td class="fw-semibold">${escapeHtml(item.host)}</td>
+                <td><span class="badge bg-light text-dark border">${item.port}</span></td>
+                <td><span class="badge bg-secondary-subtle text-secondary-emphasis">${escapeHtml(item.service || item.protocol || 'TCP')}</span></td>
+                <td>${badgeType}</td>
+                <td>
+                    <input type="text" class="form-control form-control-sm item-name-input" data-index="${index}" 
+                           value="${escapeHtml(item.hostname || item.model || (item.host + '_' + item.port))}" style="max-width: 140px;">
+                </td>
+                <td class="small text-truncate" style="max-width: 180px;">
+                    ${bannerShort}
+                </td>
+                <td class="text-end">
+                    <div class="btn-group btn-group-sm">
+                        <button class="btn btn-outline-info" onclick="viewBannerDetails(${index})" title="查看 Banner 回显">
+                            <i class="bi bi-eye"></i>
+                        </button>
+                        <button class="btn btn-outline-success" onclick="importSingleDevice(${index})" title="单个加入设备库">
+                            <i class="bi bi-plus"></i>
+                        </button>
+                    </div>
+                </td>
+            </tr>
+        `;
+    });
+
+    tbody.innerHTML = rowsHtml;
+    identifiedCount.textContent = identifiedNum;
+    updateImportBtnState();
+}
+
+function updateImportBtnState() {
+    const checks = document.querySelectorAll('.item-check:checked');
+    const btn = document.getElementById('btnImportSelected');
+    btn.disabled = checks.length === 0;
+    btn.innerHTML = `<i class="bi bi-plus-circle me-1"></i>添加到设备列表 (${checks.length})`;
+}
+
+function toggleSelectAllResults(checked) {
+    document.querySelectorAll('.item-check').forEach(c => c.checked = checked);
+    const head = document.getElementById('checkAllHead');
+    if (head) head.checked = checked;
+    updateImportBtnState();
+}
+
+function viewBannerDetails(index) {
+    const item = currentResults[index];
+    if (!item) return;
+
+    document.getElementById('modalHostPort').textContent = `${item.host}:${item.port}`;
+    document.getElementById('modalDeviceType').textContent = item.device_type_display || item.device_type || '未知类型';
+    document.getElementById('modalBannerContent').textContent = item.banner || '该端口未返回可读的 Banner 信息或响应';
+
+    const modal = new bootstrap.Modal(document.getElementById('bannerModal'));
+    modal.show();
+}
+
+async function importSingleDevice(index) {
+    const item = currentResults[index];
+    if (!item) return;
+
+    const nameInput = document.querySelector(`.item-name-input[data-index="${index}"]`);
+    const customName = nameInput ? nameInput.value.trim() : '';
+
+    const deviceToAdd = {
+        name: customName || item.hostname || `${item.host}_${item.port}`,
+        host: item.host,
+        port: item.port,
+        device_type: item.device_type,
+        device_type_display: item.device_type_display,
+        description: `扫描发现 (${item.device_type_display || '未知类型'})`
+    };
+
+    try {
+        const res = await apiCall('/api/scan/add-devices', 'POST', { devices: [deviceToAdd] });
+        if (res.success) {
+            showToast(res.message, 'success');
+        } else {
+            showToast(res.error || '添加失败', 'danger');
+        }
+    } catch (e) {
+        showToast('请求异常: ' + e.message, 'danger');
+    }
+}
+
+async function importSelectedDevices() {
+    const checkedBoxes = document.querySelectorAll('.item-check:checked');
+    if (checkedBoxes.length === 0) {
+        showToast('请至少勾选一台设备', 'warning');
+        return;
+    }
+
+    const devicesToAdd = [];
+    checkedBoxes.forEach(cb => {
+        const idx = parseInt(cb.getAttribute('data-index'));
+        const item = currentResults[idx];
+        if (item) {
+            const nameInput = document.querySelector(`.item-name-input[data-index="${idx}"]`);
+            const customName = nameInput ? nameInput.value.trim() : '';
+            devicesToAdd.push({
+                name: customName || item.hostname || `${item.host}_${item.port}`,
+                host: item.host,
+                port: item.port,
+                device_type: item.device_type,
+                device_type_display: item.device_type_display,
+                description: `扫描自动发现 (${item.device_type_display || '未知类型'})`
+            });
+        }
+    });
+
+    try {
+        const res = await apiCall('/api/scan/add-devices', 'POST', { devices: devicesToAdd });
+        if (res.success) {
+            showToast(res.message, 'success');
+        } else {
+            showToast(res.error || '批量添加失败', 'danger');
+        }
+    } catch (e) {
+        showToast('请求异常: ' + e.message, 'danger');
+    }
+}
+</script>
+{% endblock %}

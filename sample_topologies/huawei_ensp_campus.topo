@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<topo version="1.3.00.100">
+    <devices>
+        <device id="dev-ar1" name="Edge-AR1" model="AR2220" com_port="2000" x="450" y="60" role="router" />
+        <device id="dev-core1" name="Core-SW1" model="S5700" com_port="2001" x="280" y="200" role="switch" />
+        <device id="dev-core2" name="Core-SW2" model="S5700" com_port="2002" x="620" y="200" role="switch" />
+        <device id="dev-acc1" name="Acc-SW1" model="S3700" com_port="2003" x="220" y="360" role="switch" />
+        <device id="dev-acc2" name="Acc-SW2" model="S3700" com_port="2004" x="680" y="360" role="switch" />
+    </devices>
+    <lines>
+        <line fromDevice="dev-ar1" fromPort="GE 0/0/0" toDevice="dev-core1" toPort="GE 0/0/1" />
+        <line fromDevice="dev-ar1" fromPort="GE 0/0/1" toDevice="dev-core2" toPort="GE 0/0/1" />
+        <line fromDevice="dev-core1" fromPort="GE 0/0/2" toDevice="dev-core2" toPort="GE 0/0/2" />
+        <line fromDevice="dev-core1" fromPort="GE 0/0/3" toDevice="dev-acc1" toPort="GE 0/0/23" />
+        <line fromDevice="dev-core2" fromPort="GE 0/0/3" toDevice="dev-acc1" toPort="GE 0/0/24" />
+        <line fromDevice="dev-core1" fromPort="GE 0/0/4" toDevice="dev-acc2" toPort="GE 0/0/23" />
+        <line fromDevice="dev-core2" fromPort="GE 0/0/4" toDevice="dev-acc2" toPort="GE 0/0/24" />
+    </lines>
+</topo>

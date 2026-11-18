@@ -1,0 +1,485 @@
+{% extends "base.html" %}
+
+{% block title %}设备管理{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 mb-4">
+    <div>
+        <h3 class="fw-bold mb-1"><i class="bi bi-hdd-network text-primary me-2"></i>设备管理</h3>
+        <p class="text-secondary mb-0">管理华为 eNSP 及华三 HCL 模拟器或真实环境的网络设备列表</p>
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+        <button class="btn btn-outline-secondary" onclick="loadDevices()">
+            <i class="bi bi-arrow-clockwise me-1"></i>刷新
+        </button>
+        <button class="btn btn-outline-success" id="btnBatchTestDevices" onclick="batchTestAllDevices()">
+            <i class="bi bi-activity me-1"></i>全网在线心跳检测
+        </button>
+        <a href="/scan" class="btn btn-outline-info">
+            <i class="bi bi-radar me-1"></i>扫描发现设备
+        </a>
+        <button class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#importModal">
+            <i class="bi bi-file-earmark-arrow-up me-1"></i>导入设备 (YAML)
+        </button>
+        <button class="btn btn-primary" onclick="openAddDeviceModal()">
+            <i class="bi bi-plus-lg me-1"></i>添加设备
+        </button>
+    </div>
+</div>
+
+<!-- 工具栏与筛选过滤 -->
+<div class="card shadow-sm mb-4">
+    <div class="card-body py-3">
+        <div class="row g-2 align-items-center">
+            <div class="col-12 col-md-5 col-lg-4">
+                <div class="input-group">
+                    <span class="input-group-text bg-light border-end-0"><i class="bi bi-search text-muted"></i></span>
+                    <input type="text" id="deviceSearchInput" class="form-control border-start-0 ps-0" placeholder="搜索设备名称、IP 地址、分组..." oninput="filterDevices()">
+                </div>
+            </div>
+            <div class="col-6 col-md-3 col-lg-2">
+                <select id="groupFilter" class="form-select" onchange="filterDevices()">
+                    <option value="">全部设备分组</option>
+                </select>
+            </div>
+            <div class="col-6 col-md-3 col-lg-2">
+                <select id="typeFilter" class="form-select" onchange="filterDevices()">
+                    <option value="">全部设备类型</option>
+                    <option value="huawei">华为 (Huawei VRP)</option>
+                    <option value="hp_comware">华三 (H3C Comware)</option>
+                </select>
+            </div>
+            <div class="col-12 col-md-auto ms-auto text-end text-muted small">
+                共找到 <span id="filteredDeviceCount" class="fw-bold text-dark">0</span> 台设备
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 设备数据表格 -->
+<div class="card shadow-sm">
+    <div class="table-responsive">
+        <table class="table table-hover table-custom align-middle mb-0" id="deviceTable">
+            <thead>
+                <tr>
+                    <th scope="col" style="width: 15%;">名称</th>
+                    <th scope="col" style="width: 15%;">主机地址</th>
+                    <th scope="col" style="width: 8%;">端口</th>
+                    <th scope="col" style="width: 16%;">设备类型</th>
+                    <th scope="col" style="width: 12%;">分组</th>
+                    <th scope="col" style="width: 14%;">描述</th>
+                    <th scope="col" style="width: 8%;">状态</th>
+                    <th scope="col" style="width: 12%; text-align: right;">操作</th>
+                </tr>
+            </thead>
+            <tbody id="deviceTableBody">
+                <tr>
+                    <td colspan="8" class="text-center py-5 text-muted">
+                        <div class="spinner-border spinner-border-sm text-primary me-2" role="status"></div>
+                        正在加载设备列表...
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- 添加/编辑设备模态框 -->
+<div class="modal fade" id="deviceFormModal" tabindex="-1" aria-labelledby="deviceModalTitle" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold" id="deviceModalTitle">
+                    <i class="bi bi-hdd-network text-primary me-2"></i>添加新设备
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+            </div>
+            <form id="deviceForm" onsubmit="saveDevice(event)">
+                <div class="modal-body">
+                    <input type="hidden" id="formMode" value="add">
+                    <input type="hidden" id="originalDeviceName" value="">
+                    
+                    <div class="row g-3">
+                        <div class="col-12 col-md-6">
+                            <label class="form-label required fw-semibold small">设备唯一名称 (Name)</label>
+                            <input type="text" class="form-control" id="devName" required placeholder="例如: Core-SW-01 或 R1">
+                            <div class="form-text small">字母、数字、下划线或连字符，作为设备唯一标识</div>
+                        </div>
+                        <div class="col-12 col-md-6">
+                            <label class="form-label required fw-semibold small">主机 IP / 域名 (Host)</label>
+                            <input type="text" class="form-control" id="devHost" required placeholder="例如: 192.168.1.1">
+                        </div>
+
+                        <div class="col-12 col-md-4">
+                            <label class="form-label required fw-semibold small">端口号 (Port)</label>
+                            <input type="number" class="form-control" id="devPort" value="22" required min="1" max="65535">
+                        </div>
+                        <div class="col-12 col-md-8">
+                            <label class="form-label required fw-semibold small">设备系统驱动类型 (Device Type)</label>
+                            <select class="form-select" id="devType" required>
+                                <option value="huawei_vrp">huawei_vrp (华为 VRP - SSH)</option>
+                                <option value="huawei_vrp_telnet">huawei_vrp_telnet (华为 VRP - Telnet)</option>
+                                <option value="hp_comware">hp_comware (华三 H3C Comware - SSH)</option>
+                                <option value="hp_comware_telnet">hp_comware_telnet (华三 H3C Comware - Telnet)</option>
+                            </select>
+                        </div>
+
+                        <div class="col-12 col-md-6">
+                            <label class="form-label required fw-semibold small">登录用户名 (Username)</label>
+                            <input type="text" class="form-control" id="devUsername" required placeholder="例如: admin">
+                        </div>
+                        <div class="col-12 col-md-6">
+                            <label class="form-label fw-semibold small">登录密码 (Password)</label>
+                            <input type="password" class="form-control" id="devPassword" placeholder="输入密码 (留空则保持原密码或无密码)">
+                        </div>
+
+                        <div class="col-12 col-md-6">
+                            <label class="form-label fw-semibold small">设备分组 (Group)</label>
+                            <input type="text" class="form-control" id="devGroup" placeholder="例如: 核心层, 接入层, 实验区">
+                        </div>
+                        <div class="col-12 col-md-6">
+                            <label class="form-label fw-semibold small">描述说明 (Description)</label>
+                            <input type="text" class="form-control" id="devDescription" placeholder="例如: eNSP 拓扑实验汇聚核心">
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="submit" id="saveDeviceBtn" class="btn btn-primary">保存设备</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- 导入 YAML 设备模态框 -->
+<div class="modal fade" id="importModal" tabindex="-1" aria-labelledby="importModalTitle" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold" id="importModalTitle">
+                    <i class="bi bi-file-earmark-arrow-up text-primary me-2"></i>批量导入设备 (YAML)
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-secondary small mb-2">
+                    请在下方粘贴包含设备列表的 YAML 配置。格式参考样例：
+                </p>
+                <div class="mb-3">
+                    <textarea id="importYamlText" class="form-control code-editor font-monospace" rows="12" placeholder="devices:
+  - name: Huawei-Core-01
+    host: 192.168.10.1
+    port: 22
+    username: admin
+    password: admin_password
+    device_type: huawei_vrp
+    group: core
+    description: 华为eNSP核心交换机
+  - name: H3C-Agg-01
+    host: 192.168.10.2
+    port: 22
+    username: admin
+    password: admin_password
+    device_type: hp_comware
+    group: agg
+    description: 华三HCL汇聚设备"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" id="confirmImportBtn" onclick="submitImportYaml()">
+                    <i class="bi bi-cloud-arrow-up me-1"></i>开始导入
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+let allDevicesList = [];
+let deviceModalInstance = null;
+let importModalInstance = null;
+
+document.addEventListener('DOMContentLoaded', () => {
+    deviceModalInstance = new bootstrap.Modal(document.getElementById('deviceFormModal'));
+    importModalInstance = new bootstrap.Modal(document.getElementById('importModal'));
+    loadDevices();
+});
+
+// 加载设备列表
+async function loadDevices() {
+    const tbody = document.getElementById('deviceTableBody');
+    tbody.innerHTML = `
+        <tr>
+            <td colspan="8" class="text-center py-5 text-muted">
+                <div class="spinner-border spinner-border-sm text-primary me-2" role="status"></div>
+                正在加载设备列表...
+            </td>
+        </tr>
+    `;
+
+    try {
+        const res = await apiCall('/api/devices');
+        allDevicesList = Array.isArray(res) ? res : (res.devices || []);
+        updateGroupFilterDropdown();
+        filterDevices();
+    } catch (err) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="8" class="text-center py-4 text-danger">
+                    <i class="bi bi-exclamation-triangle me-2"></i>加载设备列表失败: ${escapeHtml(err.message)}
+                </td>
+            </tr>
+        `;
+        showToast('加载设备失败: ' + err.message, 'error');
+    }
+}
+
+// 刷新分组下拉框
+function updateGroupFilterDropdown() {
+    const groupSelect = document.getElementById('groupFilter');
+    const currentVal = groupSelect.value;
+    const groups = new Set();
+
+    allDevicesList.forEach(d => {
+        if (d.group && d.group.trim()) {
+            groups.add(d.group.trim());
+        }
+    });
+
+    let html = '<option value="">全部设备分组</option>';
+    groups.forEach(g => {
+        html += `<option value="${escapeHtml(g)}">${escapeHtml(g)}</option>`;
+    });
+    groupSelect.innerHTML = html;
+    groupSelect.value = currentVal;
+}
+
+// 筛选过滤
+function filterDevices() {
+    const searchVal = document.getElementById('deviceSearchInput').value.toLowerCase().trim();
+    const groupVal = document.getElementById('groupFilter').value;
+    const typeVal = document.getElementById('typeFilter').value;
+
+    const filtered = allDevicesList.filter(dev => {
+        const name = (dev.name || '').toLowerCase();
+        const host = (dev.host || '').toLowerCase();
+        const group = (dev.group || '').toLowerCase();
+        const desc = (dev.description || '').toLowerCase();
+        const type = (dev.device_type || '').toLowerCase();
+
+        const matchSearch = !searchVal || name.includes(searchVal) || host.includes(searchVal) || group.includes(searchVal) || desc.includes(searchVal);
+        const matchGroup = !groupVal || (dev.group === groupVal);
+        const matchType = !typeVal || type.includes(typeVal);
+
+        return matchSearch && matchGroup && matchType;
+    });
+
+    document.getElementById('filteredDeviceCount').textContent = filtered.length;
+    renderDeviceTable(filtered);
+}
+
+// 渲染表格
+function renderDeviceTable(devices) {
+    const tbody = document.getElementById('deviceTableBody');
+
+    if (!devices || devices.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="8" class="text-center py-5 text-muted">
+                    <i class="bi bi-inbox fs-2 d-block mb-2 text-secondary opacity-50"></i>
+                    暂无匹配的设备。您可以点击上方【添加设备】录入 eNSP 或 HCL 节点。
+                </td>
+            </tr>
+        `;
+        return;
+    }
+
+    tbody.innerHTML = devices.map(dev => `
+        <tr>
+            <td class="fw-bold text-dark">
+                <i class="bi bi-hdd-rack me-1 text-secondary"></i>${escapeHtml(dev.name)}
+            </td>
+            <td><code>${escapeHtml(dev.host)}</code></td>
+            <td><span class="badge bg-light text-dark border">${dev.port || 22}</span></td>
+            <td>${renderDeviceTypeBadge(dev.device_type)}</td>
+            <td>${dev.group ? `<span class="badge bg-secondary-subtle text-secondary">${escapeHtml(dev.group)}</span>` : '<span class="text-muted small">未分组</span>'}</td>
+            <td class="text-secondary small text-truncate" style="max-width: 180px;" title="${escapeHtml(dev.description || '')}">${escapeHtml(dev.description || '-')}</td>
+            <td>${renderDeviceStatusBadge(dev.status, dev.latency_ms, dev.prompt)}</td>
+            <td class="text-end">
+                <div class="btn-group btn-group-sm">
+                    <button class="btn btn-outline-success" title="测试连接" onclick="testDeviceConnection('${escapeHtml(dev.name)}', this)">
+                        <i class="bi bi-plug"></i>
+                    </button>
+                    <button class="btn btn-outline-primary" title="编辑" onclick="openEditDeviceModal('${escapeHtml(dev.name)}')">
+                        <i class="bi bi-pencil"></i>
+                    </button>
+                    <button class="btn btn-outline-danger" title="删除" onclick="deleteDevice('${escapeHtml(dev.name)}')">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </div>
+            </td>
+        </tr>
+    `).join('');
+}
+
+// 打开添加模态框
+function openAddDeviceModal() {
+    document.getElementById('deviceForm').reset();
+    document.getElementById('formMode').value = 'add';
+    document.getElementById('originalDeviceName').value = '';
+    document.getElementById('devName').removeAttribute('readonly');
+    document.getElementById('devPort').value = '22';
+    document.getElementById('deviceModalTitle').innerHTML = '<i class="bi bi-hdd-network text-primary me-2"></i>添加新设备';
+    deviceModalInstance.show();
+}
+
+// 打开编辑模态框
+function openEditDeviceModal(name) {
+    const dev = allDevicesList.find(d => d.name === name);
+    if (!dev) return;
+
+    document.getElementById('deviceForm').reset();
+    document.getElementById('formMode').value = 'edit';
+    document.getElementById('originalDeviceName').value = dev.name;
+    document.getElementById('devName').value = dev.name;
+    document.getElementById('devName').setAttribute('readonly', true);
+    document.getElementById('devHost').value = dev.host || '';
+    document.getElementById('devPort').value = dev.port || 22;
+    document.getElementById('devType').value = dev.device_type || 'huawei_vrp';
+    document.getElementById('devUsername').value = dev.username || '';
+    document.getElementById('devPassword').value = dev.password || '';
+    document.getElementById('devGroup').value = dev.group || '';
+    document.getElementById('devDescription').value = dev.description || '';
+
+    document.getElementById('deviceModalTitle').innerHTML = `<i class="bi bi-pencil-square text-primary me-2"></i>编辑设备: ${escapeHtml(dev.name)}`;
+    deviceModalInstance.show();
+}
+
+// 保存设备 (新增或修改)
+async function saveDevice(event) {
+    event.preventDefault();
+    const mode = document.getElementById('formMode').value;
+    const saveBtn = document.getElementById('saveDeviceBtn');
+
+    const devData = {
+        name: document.getElementById('devName').value.trim(),
+        host: document.getElementById('devHost').value.trim(),
+        port: parseInt(document.getElementById('devPort').value, 10) || 22,
+        device_type: document.getElementById('devType').value,
+        username: document.getElementById('devUsername').value.trim(),
+        password: document.getElementById('devPassword').value,
+        group: document.getElementById('devGroup').value.trim(),
+        description: document.getElementById('devDescription').value.trim()
+    };
+
+    showLoading(saveBtn, '保存中...');
+    try {
+        if (mode === 'add') {
+            await apiCall('/api/devices', 'POST', devData);
+            showToast(`设备 ${devData.name} 添加成功`, 'success');
+        } else {
+            const origName = document.getElementById('originalDeviceName').value;
+            await apiCall(`/api/devices/${encodeURIComponent(origName)}`, 'PUT', devData);
+            showToast(`设备 ${devData.name} 更新成功`, 'success');
+        }
+        deviceModalInstance.hide();
+        loadDevices();
+    } catch (err) {
+        showToast('保存设备失败: ' + err.message, 'error');
+    } finally {
+        hideLoading(saveBtn);
+    }
+}
+
+// 测试连接
+async function testDeviceConnection(name, btn) {
+    showLoading(btn, '');
+    try {
+        const res = await apiCall(`/api/devices/${encodeURIComponent(name)}/test`, 'POST');
+        if (res.success || res.status === 'ok' || res.status === 'online') {
+            showToast(`设备 ${name} 连接成功！`, 'success');
+        } else {
+            showToast(`设备 ${name} 连接测试返回: ${res.message || '未知状态'}`, 'warning');
+        }
+        loadDevices();
+    } catch (err) {
+        showToast(`测试连接 ${name} 失败: ${err.message}`, 'error');
+    } finally {
+        hideLoading(btn);
+    }
+}
+
+// 删除设备
+async function deleteDevice(name) {
+    if (!confirmAction(`确定要删除设备 [${name}] 吗？此操作无法撤销。`)) {
+        return;
+    }
+
+    try {
+        await apiCall(`/api/devices/${encodeURIComponent(name)}`, 'DELETE');
+        showToast(`设备 ${name} 已成功删除`, 'success');
+        loadDevices();
+    } catch (err) {
+        showToast(`删除设备失败: ${err.message}`, 'error');
+    }
+}
+
+// 批量导入 YAML
+async function submitImportYaml() {
+    const yamlText = document.getElementById('importYamlText').value.trim();
+    if (!yamlText) {
+        showToast('请粘贴要导入的 YAML 格式设备数据', 'warning');
+        return;
+    }
+
+    const importBtn = document.getElementById('confirmImportBtn');
+    showLoading(importBtn, '导入解析中...');
+
+    try {
+        const res = await apiCall('/api/devices/import', 'POST', { yaml: yamlText });
+        const count = res.imported_count || res.count || (res.devices && res.devices.length) || '若干';
+        showToast(`成功导入 ${count} 台设备`, 'success');
+        importModalInstance.hide();
+        document.getElementById('importYamlText').value = '';
+        loadDevices();
+    } catch (err) {
+        showToast('导入失败: ' + err.message, 'error');
+    } finally {
+        hideLoading(importBtn);
+    }
+}
+
+// Sprint 5: 全网并发在线心跳检测
+async function batchTestAllDevices() {
+    const btn = document.getElementById('btnBatchTestDevices');
+    showLoading(btn, '正在并发探测全网心跳...');
+    try {
+        const res = await apiCall('/api/devices/batch-test', 'POST', {});
+        const resultMap = {};
+        (res.results || []).forEach(r => {
+            resultMap[r.device] = r;
+        });
+
+        allDevicesList.forEach(dev => {
+            const r = resultMap[dev.name];
+            if (r) {
+                dev.status = r.success ? 'online' : 'offline';
+                dev.latency_ms = r.latency_ms;
+                dev.prompt = r.prompt;
+            }
+        });
+
+        filterDevices();
+        showToast(`⚡ 全网心跳探测完成: ${res.online_count} 台在线，${res.offline_count} 台离线`, res.online_count > 0 ? 'success' : 'info');
+    } catch (err) {
+        showToast('全网心跳探测失败: ' + err.message, 'error');
+    } finally {
+        hideLoading(btn);
+    }
+}
+</script>
+{% endblock %}

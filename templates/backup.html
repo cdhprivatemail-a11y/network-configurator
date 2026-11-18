@@ -1,0 +1,635 @@
+{% extends "base.html" %}
+
+{% block title %}备份管理{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 mb-4">
+    <div>
+        <h3 class="fw-bold mb-1"><i class="bi bi-cloud-download text-primary me-2"></i>备份管理</h3>
+        <p class="text-secondary mb-0">自动化抓取并归档华为与华三设备的运行配置 (running-config)，支持历史版本差异比对</p>
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+        <button class="btn btn-outline-secondary" onclick="loadBackups()">
+            <i class="bi bi-arrow-clockwise me-1"></i>刷新
+        </button>
+        <button class="btn btn-outline-warning text-dark fw-semibold" id="btnDriftCheck" onclick="runConfigDriftCheck()">
+            <i class="bi bi-clock-history me-1"></i>配置漂移检测 (运行 vs 基线)
+        </button>
+        <button class="btn btn-primary" onclick="openRunBackupModal()">
+            <i class="bi bi-cloud-arrow-down me-1"></i>运行设备备份
+        </button>
+    </div>
+</div>
+
+<!-- 备份列表卡片 -->
+<div class="card shadow-sm mb-4">
+    <div class="card-header bg-white py-3">
+        <div class="row g-2 align-items-center">
+            <div class="col-12 col-md-4">
+                <div class="input-group">
+                    <span class="input-group-text bg-light border-end-0"><i class="bi bi-search text-muted"></i></span>
+                    <input type="text" id="backupSearchInput" class="form-control border-start-0 ps-0" placeholder="搜索备份文件名..." oninput="filterBackups()">
+                </div>
+            </div>
+            <div class="col-12 col-md-3">
+                <select id="backupDeviceFilter" class="form-select" onchange="filterBackups()">
+                    <option value="">全部设备备份</option>
+                </select>
+            </div>
+            <div class="col-12 col-md-auto ms-auto text-end text-muted small">
+                共找到 <span id="filteredBackupCount" class="fw-bold text-dark">0</span> 个配置文件
+            </div>
+        </div>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover table-custom align-middle mb-0" id="backupsTable">
+            <thead>
+                <tr>
+                    <th scope="col" style="width: 30%;">文件名</th>
+                    <th scope="col" style="width: 20%;">归属设备</th>
+                    <th scope="col" style="width: 20%;">备份时间</th>
+                    <th scope="col" style="width: 12%;">文件大小</th>
+                    <th scope="col" style="width: 18%; text-align: right;">操作</th>
+                </tr>
+            </thead>
+            <tbody id="backupsTableBody">
+                <tr>
+                    <td colspan="5" class="text-center py-5 text-muted">
+                        <div class="spinner-border spinner-border-sm text-primary me-2"></div>正在加载备份列表...
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- 配置差异比对 (Diff) 区域 -->
+<div class="card shadow-sm mb-4">
+    <div class="card-header bg-white py-3">
+        <h5 class="fw-bold mb-0"><i class="bi bi-file-diff text-primary me-2"></i>配置版本差异比对 (Diff Comparison)</h5>
+    </div>
+    <div class="card-body">
+        <div class="row g-3 align-items-end mb-4">
+            <div class="col-12 col-md-5">
+                <label class="form-label small fw-semibold">基准配置 (旧版本 / Source):</label>
+                <select id="diffBackupSource" class="form-select">
+                    <option value="">-- 选择源配置文件 --</option>
+                </select>
+            </div>
+            <div class="col-12 col-md-5">
+                <label class="form-label small fw-semibold">比对配置 (新版本 / Target):</label>
+                <select id="diffBackupTarget" class="form-select">
+                    <option value="">-- 选择比对目标文件 --</option>
+                </select>
+            </div>
+            <div class="col-12 col-md-2">
+                <button class="btn btn-outline-primary w-100" id="startCompareBtn" onclick="compareBackups()">
+                    <i class="bi bi-arrows-collapse me-1"></i>开始比对
+                </button>
+            </div>
+        </div>
+
+        <div id="diffOutputContainer" style="display: none;">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <span class="small fw-semibold text-secondary">
+                    <span class="badge bg-danger-subtle text-danger border border-danger-subtle me-2">- 删减内容 (Red)</span>
+                    <span class="badge bg-success-subtle text-success border border-success-subtle">+ 新增内容 (Green)</span>
+                </span>
+                <span id="diffSummaryBadge" class="badge bg-light text-dark border">差异统计</span>
+            </div>
+            <div class="diff-container p-2" id="diffRenderArea" style="max-height: 480px; overflow-y: auto;">
+                <!-- Diff 行渲染 -->
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 查看备份模态框 -->
+<div class="modal fade" id="viewBackupModal" tabindex="-1" aria-labelledby="viewBackupModalTitle" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold" id="viewBackupModalTitle">
+                    <i class="bi bi-file-text text-primary me-2"></i>查看配置备份内容
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+            </div>
+            <div class="modal-body p-0">
+                <pre class="code-view m-0 rounded-0 border-0" id="viewBackupPreContent" style="max-height: 70vh;"></pre>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+                <a href="#" class="btn btn-primary" id="modalDownloadBtn" download>
+                    <i class="bi bi-download me-1"></i>下载到本地
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 执行设备备份模态框 -->
+<div class="modal fade" id="runBackupModal" tabindex="-1" aria-labelledby="runBackupModalTitle" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold" id="runBackupModalTitle">
+                    <i class="bi bi-cloud-arrow-down text-primary me-2"></i>选择设备运行备份
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+            </div>
+            <div class="modal-body">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <span class="small fw-semibold text-secondary">选择目标设备:</span>
+                    <div>
+                        <button type="button" class="btn btn-sm btn-link p-0 text-decoration-none me-2" onclick="selectAllCheckboxes('.backup-dev-cb', true)">全选</button>
+                        <button type="button" class="btn btn-sm btn-link p-0 text-decoration-none" onclick="selectAllCheckboxes('.backup-dev-cb', false)">取消</button>
+                    </div>
+                </div>
+                <div class="device-select-box p-2 mb-3" id="backupDevicesCheckList" style="max-height: 280px;">
+                    <div class="text-center py-4 text-muted small">加载设备中...</div>
+                </div>
+
+                <div id="backupProgressArea" style="display: none;">
+                    <div class="d-flex justify-content-between small text-secondary mb-1">
+                        <span>正在执行备份任务...</span>
+                        <span id="backupProgressPercent">进行中</span>
+                    </div>
+                    <div class="progress mb-2" style="height: 6px;">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated bg-primary" role="progressbar" style="width: 100%"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" id="confirmRunBackupBtn" onclick="submitRunBackup()">
+                    <i class="bi bi-play-fill me-1"></i>开始执行备份
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 全网配置漂移检测模态框 -->
+<div class="modal fade" id="driftCheckModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-centered">
+        <div class="modal-content border-0 shadow-lg">
+            <div class="modal-header bg-warning text-dark py-2">
+                <h6 class="modal-title fw-bold"><i class="bi bi-clock-history me-2"></i>全网配置漂移分析报告 (设备当前运行内存 vs 最新基线快照)</h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body p-3">
+                <div class="d-flex justify-content-between align-items-center p-3 mb-3 bg-light rounded border">
+                    <div>
+                        <div class="fw-bold fs-5 text-dark" id="driftSummaryTitle">配置一致性普查</div>
+                        <div class="small text-muted" id="driftSummarySub">已比对设备当前运行状态</div>
+                    </div>
+                    <div>
+                        <span class="badge px-3 py-2 fs-6" id="driftStatusBadge">分析中...</span>
+                    </div>
+                </div>
+
+                <div class="table-responsive" style="max-height: 420px; overflow-y: auto;">
+                    <table class="table table-sm table-hover align-middle mb-0 small">
+                        <thead class="table-light">
+                            <tr>
+                                <th>设备名称</th>
+                                <th>漂移状态</th>
+                                <th>基线文件</th>
+                                <th>变更统计</th>
+                                <th>漂移差异特征 (前5处)</th>
+                            </tr>
+                        </thead>
+                        <tbody id="driftCheckResultsBody">
+                            <tr><td colspan="5" class="text-center text-muted py-3">正在比对设备内存配置与基线快照...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-footer bg-light py-2">
+                <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">关闭</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+let allBackupsList = [];
+let availableDevices = [];
+let viewModalInstance = null;
+let runModalInstance = null;
+
+document.addEventListener('DOMContentLoaded', () => {
+    viewModalInstance = new bootstrap.Modal(document.getElementById('viewBackupModal'));
+    runModalInstance = new bootstrap.Modal(document.getElementById('runBackupModal'));
+    initBackupPage();
+});
+
+async function initBackupPage() {
+    await Promise.all([loadBackups(), loadDeviceListForBackup()]);
+}
+
+// 加载备份文件列表
+async function loadBackups() {
+    const tbody = document.getElementById('backupsTableBody');
+    tbody.innerHTML = `
+        <tr>
+            <td colspan="5" class="text-center py-5 text-muted">
+                <div class="spinner-border spinner-border-sm text-primary me-2"></div>正在加载备份列表...
+            </td>
+        </tr>
+    `;
+
+    try {
+        const res = await apiCall('/api/backups');
+        allBackupsList = Array.isArray(res) ? res : (res.backups || []);
+        
+        updateDeviceFilterDropdown();
+        populateDiffSelectors();
+        filterBackups();
+    } catch (err) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="5" class="text-center py-4 text-danger">
+                    <i class="bi bi-exclamation-triangle me-2"></i>加载备份失败: ${escapeHtml(err.message)}
+                </td>
+            </tr>
+        `;
+        showToast('加载备份失败: ' + err.message, 'error');
+    }
+}
+
+// 加载设备列表
+async function loadDeviceListForBackup() {
+    try {
+        const res = await apiCall('/api/devices');
+        availableDevices = Array.isArray(res) ? res : (res.devices || []);
+    } catch (e) {
+        console.warn('获取设备列表失败:', e);
+    }
+}
+
+// 更新设备下拉筛选框
+function updateDeviceFilterDropdown() {
+    const filter = document.getElementById('backupDeviceFilter');
+    const curVal = filter.value;
+    const devices = new Set();
+
+    allBackupsList.forEach(b => {
+        const d = b.device || b.device_name;
+        if (d) devices.add(d);
+    });
+
+    let html = '<option value="">全部设备备份</option>';
+    devices.forEach(d => {
+        html += `<option value="${escapeHtml(d)}">${escapeHtml(d)}</option>`;
+    });
+    filter.innerHTML = html;
+    filter.value = curVal;
+}
+
+// 填充比对下拉框
+function populateDiffSelectors() {
+    const selA = document.getElementById('diffBackupSource');
+    const selB = document.getElementById('diffBackupTarget');
+
+    let html = '<option value="">-- 选择配置文件 --</option>';
+    allBackupsList.forEach(b => {
+        const fn = b.filename || b.name || b.id;
+        const dev = b.device || b.device_name || '';
+        const time = b.created_at || b.timestamp || '';
+        html += `<option value="${escapeHtml(fn)}">${escapeHtml(dev ? `[${dev}] ` : '')}${escapeHtml(fn)} (${formatDateTime(time)})</option>`;
+    });
+
+    selA.innerHTML = html;
+    selB.innerHTML = html;
+}
+
+// 筛选备份列表
+function filterBackups() {
+    const searchVal = document.getElementById('backupSearchInput').value.toLowerCase().trim();
+    const devVal = document.getElementById('backupDeviceFilter').value;
+
+    const filtered = allBackupsList.filter(b => {
+        const fn = (b.filename || b.name || '').toLowerCase();
+        const dev = (b.device || b.device_name || '').toLowerCase();
+
+        const matchSearch = !searchVal || fn.includes(searchVal) || dev.includes(searchVal);
+        const matchDev = !devVal || (b.device === devVal || b.device_name === devVal);
+
+        return matchSearch && matchDev;
+    });
+
+    document.getElementById('filteredBackupCount').textContent = filtered.length;
+    renderBackupTable(filtered);
+}
+
+// 渲染表格
+function renderBackupTable(backups) {
+    const tbody = document.getElementById('backupsTableBody');
+
+    if (!backups || backups.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="5" class="text-center py-5 text-muted">
+                    <i class="bi bi-inbox fs-2 d-block mb-2 text-secondary opacity-50"></i>
+                    暂无备份记录。可点击上方【运行设备备份】生成备份文件。
+                </td>
+            </tr>
+        `;
+        return;
+    }
+
+    tbody.innerHTML = backups.map(b => {
+        const fn = b.filename || b.name || b.id;
+        const dev = b.device || b.device_name || '未知设备';
+        const time = b.created_at || b.timestamp || b.time || '-';
+        const size = b.size !== undefined ? formatFileSize(b.size) : '-';
+
+        return `
+            <tr>
+                <td class="fw-semibold font-monospace text-dark">
+                    <i class="bi bi-file-earmark-text text-primary me-2"></i>${escapeHtml(fn)}
+                </td>
+                <td>
+                    <span class="badge bg-secondary-subtle text-secondary"><i class="bi bi-router me-1"></i>${escapeHtml(dev)}</span>
+                </td>
+                <td class="text-muted small">${formatDateTime(time)}</td>
+                <td class="small"><code>${size}</code></td>
+                <td class="text-end">
+                    <div class="btn-group btn-group-sm">
+                        <button class="btn btn-outline-primary" title="查看配置" onclick="viewBackupFile('${escapeHtml(fn)}')">
+                            <i class="bi bi-eye"></i>
+                        </button>
+                        <a href="/api/backups/${encodeURIComponent(fn)}/download" class="btn btn-outline-secondary" title="下载" download>
+                            <i class="bi bi-download"></i>
+                        </a>
+                        <button class="btn btn-outline-danger" title="删除" onclick="deleteBackupFile('${escapeHtml(fn)}')">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+// 查看备份内容
+async function viewBackupFile(filename) {
+    document.getElementById('viewBackupModalTitle').innerHTML = `<i class="bi bi-file-text text-primary me-2"></i>配置文件: ${escapeHtml(filename)}`;
+    document.getElementById('viewBackupPreContent').textContent = '正在读取备份文件内容...';
+    document.getElementById('modalDownloadBtn').href = `/api/backups/${encodeURIComponent(filename)}/download`;
+    viewModalInstance.show();
+
+    try {
+        const res = await apiCall(`/api/backups/${encodeURIComponent(filename)}`);
+        const content = typeof res === 'string' ? res : (res.content || JSON.stringify(res, null, 2));
+        document.getElementById('viewBackupPreContent').textContent = content;
+    } catch (err) {
+        document.getElementById('viewBackupPreContent').textContent = `读取失败: ${err.message}`;
+        showToast('读取备份详情失败: ' + err.message, 'error');
+    }
+}
+
+// 删除备份
+async function deleteBackupFile(filename) {
+    if (!confirmAction(`确定要删除备份文件 [${filename}] 吗？`)) {
+        return;
+    }
+
+    try {
+        await apiCall(`/api/backups/${encodeURIComponent(filename)}`, 'DELETE');
+        showToast(`备份文件 [${filename}] 已删除`, 'success');
+        loadBackups();
+    } catch (err) {
+        showToast('删除备份失败: ' + err.message, 'error');
+    }
+}
+
+// 打开运行备份模态框
+function openRunBackupModal() {
+    const listEl = document.getElementById('backupDevicesCheckList');
+    document.getElementById('backupProgressArea').style.display = 'none';
+
+    if (availableDevices.length === 0) {
+        listEl.innerHTML = '<div class="text-center py-4 text-muted small">暂无可用设备</div>';
+    } else {
+        listEl.innerHTML = availableDevices.map(d => `
+            <div class="device-select-item d-flex align-items-center justify-content-between">
+                <div class="form-check mb-0">
+                    <input class="form-check-input backup-dev-cb" type="checkbox" value="${escapeHtml(d.name)}" id="bdev_${escapeHtml(d.name)}" checked>
+                    <label class="form-check-label fw-semibold small" for="bdev_${escapeHtml(d.name)}">
+                        ${escapeHtml(d.name)}
+                    </label>
+                </div>
+                <div>${renderDeviceTypeBadge(d.device_type)}</div>
+            </div>
+        `).join('');
+    }
+
+    runModalInstance.show();
+}
+
+// 提交运行备份
+async function submitRunBackup() {
+    const selectedDevices = getSelectedDevices('.backup-dev-cb');
+    if (selectedDevices.length === 0) {
+        showToast('请至少选择一台需要备份的网络设备！', 'warning');
+        return;
+    }
+
+    const btn = document.getElementById('confirmRunBackupBtn');
+    showLoading(btn, '备份执行中...');
+    document.getElementById('backupProgressArea').style.display = 'block';
+
+    try {
+        const res = await apiCall('/api/backups/run', 'POST', {
+            devices: selectedDevices,
+            device_names: selectedDevices
+        });
+        showToast('备份任务已成功执行完成！', 'success');
+        runModalInstance.hide();
+        loadBackups();
+    } catch (err) {
+        showToast('备份执行异常: ' + err.message, 'error');
+    } finally {
+        hideLoading(btn);
+        document.getElementById('backupProgressArea').style.display = 'none';
+    }
+}
+
+// 配置差异比对
+async function compareBackups() {
+    const source = document.getElementById('diffBackupSource').value;
+    const target = document.getElementById('diffBackupTarget').value;
+
+    if (!source || !target) {
+        showToast('请在上方选择两份需要进行差异比对的配置文件！', 'warning');
+        return;
+    }
+
+    if (source === target) {
+        showToast('所选两份配置文件相同，无法比对差异！', 'warning');
+        return;
+    }
+
+    const btn = document.getElementById('startCompareBtn');
+    showLoading(btn, '比对中...');
+
+    try {
+        const res = await apiCall('/api/backups/diff', 'POST', {
+            source_file: source,
+            target_file: target,
+            file1: source,
+            file2: target
+        });
+
+        renderDiffView(res);
+        document.getElementById('diffOutputContainer').style.display = 'block';
+        showToast('配置差异比对分析完成', 'info');
+    } catch (err) {
+        showToast('比对失败: ' + err.message, 'error');
+    } finally {
+        hideLoading(btn);
+    }
+}
+
+// 渲染 Diff 视图
+function renderDiffView(res) {
+    const container = document.getElementById('diffRenderArea');
+    const summary = document.getElementById('diffSummaryBadge');
+
+    // 支持 res.lines、数组形式 res.diff 以及换行字符串
+    let diffLines = [];
+    if (res.lines && Array.isArray(res.lines)) {
+        diffLines = res.lines;
+    } else if (Array.isArray(res.diff)) {
+        diffLines = res.diff;
+    } else if (typeof res.diff === 'string') {
+        diffLines = res.diff.split('\n');
+    } else if (typeof res === 'string') {
+        diffLines = res.split('\n');
+    }
+
+    let addCount = 0;
+    let delCount = 0;
+
+    let html = '';
+    diffLines.forEach((line, index) => {
+        let type = 'context';
+        if (line.startsWith('+') && !line.startsWith('+++')) {
+            type = 'addition';
+            addCount++;
+        } else if (line.startsWith('-') && !line.startsWith('---')) {
+            type = 'deletion';
+            delCount++;
+        }
+
+        html += `
+            <div class="diff-line ${type}">
+                <span class="line-num">${index + 1}</span>
+                <span>${escapeHtml(line)}</span>
+            </div>
+        `;
+    });
+
+    if (diffLines.length === 0) {
+        html = '<div class="p-3 text-center text-muted small">两份配置文件内容完全相同，无差异。</div>';
+    }
+
+    container.innerHTML = html;
+    summary.textContent = `新增: +${addCount} 行 / 删减: -${delCount} 行`;
+}
+
+// Sprint 5: 全网配置漂移普查
+async function runConfigDriftCheck() {
+    const btn = document.getElementById('btnDriftCheck');
+    const modalEl = document.getElementById('driftCheckModal');
+    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+    
+    document.getElementById('driftSummaryTitle').textContent = '全网配置一致性普查';
+    document.getElementById('driftSummarySub').textContent = '正在并发读取设备运行内存配置并与黄金基线快照比对...';
+    document.getElementById('driftStatusBadge').className = 'badge px-3 py-2 fs-6 bg-warning text-dark';
+    document.getElementById('driftStatusBadge').innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>分析比对中...';
+    document.getElementById('driftCheckResultsBody').innerHTML = '<tr><td colspan="5" class="text-center py-4 text-muted"><div class="spinner-border spinner-border-sm text-primary me-2"></div>正在比对设备内存配置与基线快照，请稍候...</td></tr>';
+    
+    modal.show();
+    showLoading(btn, '比对中...');
+
+    try {
+        const res = await apiCall('/api/backup/drift-check', 'POST', {});
+        const total = res.total_checked || 0;
+        const drifted = res.drifted_count || 0;
+        const inSync = res.in_sync_count || 0;
+        const rate = total > 0 ? Math.round((inSync / total) * 100) : 100;
+
+        document.getElementById('driftSummaryTitle').textContent = `普查完成: 共 ${total} 台设备`;
+        document.getElementById('driftSummarySub').textContent = `一致率: ${rate}% (${inSync}/${total} 台与基线一致，${drifted} 台发现未固化或未授权变更)`;
+
+        const badge = document.getElementById('driftStatusBadge');
+        if (drifted > 0) {
+            badge.className = 'badge px-3 py-2 fs-6 bg-danger text-white';
+            badge.innerHTML = `<i class="bi bi-exclamation-octagon me-1"></i>${drifted} 台配置存在漂移`;
+        } else {
+            badge.className = 'badge px-3 py-2 fs-6 bg-success text-white';
+            badge.innerHTML = '<i class="bi bi-shield-check me-1"></i>全网配置与基线完全一致';
+        }
+
+        const tbody = document.getElementById('driftCheckResultsBody');
+        if (!res.results || res.results.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" class="text-center py-3 text-muted">未查询到任何设备的配置信息</td></tr>';
+        } else {
+            tbody.innerHTML = res.results.map(r => {
+                let statusBadge = '';
+                if (r.status === 'drifted') {
+                    statusBadge = '<span class="badge bg-danger"><i class="bi bi-exclamation-octagon me-1"></i>配置已漂移</span>';
+                } else if (r.status === 'in_sync') {
+                    statusBadge = '<span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>基线同步</span>';
+                } else if (r.status === 'baseline_initialized') {
+                    statusBadge = '<span class="badge bg-info text-dark"><i class="bi bi-plus-circle me-1"></i>基线初始化</span>';
+                } else {
+                    statusBadge = '<span class="badge bg-secondary"><i class="bi bi-x-circle me-1"></i>离线/失败</span>';
+                }
+
+                let diffStats = '<span class="text-muted">-</span>';
+                if (r.has_drift) {
+                    diffStats = `<span class="text-success fw-bold">+${r.added_count || 0}</span> / <span class="text-danger fw-bold">-${r.removed_count || 0}</span>`;
+                }
+
+                let sampleHtml = `<span class="text-muted small">${escapeHtml(r.message || '')}</span>`;
+                if (r.has_drift && ((r.added_samples && r.added_samples.length) || (r.removed_samples && r.removed_samples.length))) {
+                    const samples = [];
+                    (r.added_samples || []).slice(0, 3).forEach(s => {
+                        samples.push(`<div class="text-success text-truncate font-monospace" style="max-width: 320px;" title="${escapeHtml(s)}">${escapeHtml(s)}</div>`);
+                    });
+                    (r.removed_samples || []).slice(0, 2).forEach(s => {
+                        samples.push(`<div class="text-danger text-truncate font-monospace" style="max-width: 320px;" title="${escapeHtml(s)}">${escapeHtml(s)}</div>`);
+                    });
+                    sampleHtml = samples.join('');
+                }
+
+                return `
+                    <tr>
+                        <td class="fw-semibold font-monospace"><i class="bi bi-router text-primary me-2"></i>${escapeHtml(r.device)}</td>
+                        <td>${statusBadge}</td>
+                        <td class="text-muted small font-monospace">${escapeHtml(r.baseline_file || '-')}</td>
+                        <td>${diffStats}</td>
+                        <td>${sampleHtml}</td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        showToast(`配置漂移普查完成: 检测 ${total} 台，${drifted} 台存在漂移`, drifted > 0 ? 'warning' : 'success');
+    } catch (err) {
+        document.getElementById('driftStatusBadge').className = 'badge px-3 py-2 fs-6 bg-danger text-white';
+        document.getElementById('driftStatusBadge').textContent = '检测失败';
+        document.getElementById('driftCheckResultsBody').innerHTML = `<tr><td colspan="5" class="text-center py-4 text-danger"><i class="bi bi-exclamation-triangle me-2"></i>漂移检测失败: ${escapeHtml(err.message)}</td></tr>`;
+        showToast('配置漂移检测失败: ' + err.message, 'error');
+    } finally {
+        hideLoading(btn);
+    }
+}
+</script>
+{% endblock %}

@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}网络批量配置器{% endblock %} - 网络批量配置管理系统</title>
+    <!-- Bootstrap 5.3 CSS CDN -->
+    <link href="https://cdn.bootcdn.net/ajax/libs/twitter-bootstrap/5.3.3/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap Icons CDN -->
+    <link href="https://cdn.bootcdn.net/ajax/libs/bootstrap-icons/1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+    <!-- Custom CSS -->
+    <link href="/static/css/style.css" rel="stylesheet">
+    {% block extra_head %}{% endblock %}
+</head>
+<body class="d-flex flex-column min-vh-100">
+    <!-- 顶部导航栏 -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark sticky-top shadow-sm main-navbar">
+        <div class="container-fluid px-lg-4">
+            <a class="navbar-brand d-flex align-items-center gap-2" href="/">
+                <i class="bi bi-router-fill text-primary fs-4"></i>
+                <span class="fw-bold tracking-wide">网络批量配置器</span>
+                <span class="badge bg-primary-subtle text-primary-emphasis border border-primary-subtle fs-badge ms-1">v5.0<span class="d-none d-xxl-inline"> Enterprise</span></span>
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarContent" aria-controls="navbarContent" aria-expanded="false" aria-label="切换导航">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarContent">
+                <ul class="navbar-nav me-auto mb-2 mb-lg-0 nav-pills-custom">
+                    <li class="nav-item">
+                        <a class="nav-link {% if active_page == 'dashboard' or request.path == '/' %}active{% endif %}" href="/">
+                            <i class="bi bi-speedometer2 me-1"></i>仪表盘
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% if active_page == 'devices' or request.path == '/devices' %}active{% endif %}" href="/devices">
+                            <i class="bi bi-hdd-network me-1"></i>设备管理
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% if active_page == 'scan' or request.path == '/scan' %}active{% endif %}" href="/scan">
+                            <i class="bi bi-radar me-1"></i>设备扫描
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% if active_page == 'topology' or request.path == '/topology' %}active{% endif %}" href="/topology">
+                            <i class="bi bi-diagram-3 me-1"></i>智能拓扑
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% if active_page == 'features' or request.path == '/features' %}active{% endif %}" href="/features">
+                            <i class="bi bi-ui-checks-grid me-1"></i>特性向导
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% if active_page == 'audit' or request.path == '/audit' %}active{% endif %}" href="/audit">
+                            <i class="bi bi-shield-check me-1"></i>合规巡检
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% if active_page == 'configure' or request.path == '/configure' %}active{% endif %}" href="/configure">
+                            <i class="bi bi-terminal me-1"></i>批量配置
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% if active_page == 'templates' or request.path == '/templates' %}active{% endif %}" href="/templates">
+                            <i class="bi bi-file-code me-1"></i>配置模板
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% if active_page == 'backup' or request.path == '/backup' %}active{% endif %}" href="/backup">
+                            <i class="bi bi-cloud-download me-1"></i>备份管理
+                        </a>
+                    </li>
+                </ul>
+                <div class="d-flex align-items-center gap-2 text-light-50">
+                    <span class="badge bg-success-subtle text-success border border-success-subtle d-flex align-items-center gap-1">
+                        <span class="status-dot bg-success"></span> 系统在线
+                    </span>
+                    <span class="text-secondary small d-none d-xxl-inline">支持: 华为 eNSP / 华三 HCL</span>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- 主体内容 -->
+    <main class="flex-grow-1 py-4">
+        <div class="container-fluid px-lg-4">
+            {% block content %}{% endblock %}
+        </div>
+    </main>
+
+    <!-- 底部版权信息 -->
+    <footer class="footer mt-auto py-3 bg-white border-top text-muted">
+        <div class="container-fluid px-lg-4 d-flex flex-column flex-sm-row justify-content-between align-items-center gap-2">
+            <div class="small">
+                <span>&copy; 2026 网络批量配置器 (Network Batch Configurator). All rights reserved.</span>
+            </div>
+            <div class="small text-secondary d-flex align-items-center gap-3">
+                <span><i class="bi bi-cpu me-1"></i>Netmiko / Scrapli 驱动</span>
+                <span><i class="bi bi-shield-check me-1"></i>仿真平台兼容模式</span>
+            </div>
+        </div>
+    </footer>
+
+    <!-- 全局 Toast 提示容器 -->
+    <div class="toast-container position-fixed top-0 end-0 p-3" style="z-index: 1090;">
+        <div id="appToast" class="toast align-items-center border-0 shadow" role="alert" aria-live="assertive" aria-atomic="true">
+            <div class="d-flex">
+                <div class="toast-body d-flex align-items-center gap-2">
+                    <i id="toastIcon" class="bi bi-info-circle fs-5"></i>
+                    <span id="toastMessage">操作通知</span>
+                </div>
+                <button type="button" class="btn-close me-2 m-auto" data-bs-dismiss="toast" aria-label="关闭"></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap 5.3 JS Bundle CDN -->
+    <script src="https://cdn.bootcdn.net/ajax/libs/twitter-bootstrap/5.3.3/js/bootstrap.bundle.min.js"></script>
+    <!-- 全局主脚本 -->
+    <script src="/static/js/main.js"></script>
+    {% block extra_scripts %}{% endblock %}
+</body>
+</html>

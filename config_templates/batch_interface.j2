@@ -1,0 +1,17 @@
+system-view
+{% for intf in interfaces %}
+interface {{ intf.name }}
+{% if intf.ip is defined %}
+ ip address {{ intf.ip }} {{ intf.mask }}
+{% endif %}
+{% if intf.vlan is defined %}
+ port link-type access
+ port default vlan {{ intf.vlan }}
+{% endif %}
+{% if intf.description is defined %}
+ description {{ intf.description }}
+{% endif %}
+ undo shutdown
+quit
+{% endfor %}
+return

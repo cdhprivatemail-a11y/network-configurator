@@ -1,0 +1,325 @@
+{% extends "base.html" %}
+
+{% block title %}配置模板管理{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 mb-4">
+    <div>
+        <h3 class="fw-bold mb-1"><i class="bi bi-file-code text-primary me-2"></i>配置模板管理</h3>
+        <p class="text-secondary mb-0">维护基于 Jinja2 语法的网络设备标准化配置模板，支持动态参数变量预览</p>
+    </div>
+    <div>
+        <button class="btn btn-primary" onclick="createNewTemplate()">
+            <i class="bi bi-plus-lg me-1"></i>新建模板
+        </button>
+    </div>
+</div>
+
+<div class="row g-4">
+    <!-- 左侧：模板导航列表 -->
+    <div class="col-12 col-lg-4 col-xl-3">
+        <div class="card shadow-sm h-100">
+            <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+                <h6 class="fw-bold mb-0"><i class="bi bi-list-nested me-2 text-secondary"></i>模板列表</h6>
+                <button class="btn btn-sm btn-outline-secondary" onclick="loadTemplates()" title="刷新模板">
+                    <i class="bi bi-arrow-clockwise"></i>
+                </button>
+            </div>
+            <div class="card-body p-2">
+                <div class="list-group list-group-flush template-list-group" id="templatesListContainer">
+                    <div class="text-center py-4 text-muted">
+                        <div class="spinner-border spinner-border-sm text-primary me-2"></div>正在加载模板...
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 右侧：模板编辑器与预览区 -->
+    <div class="col-12 col-lg-8 col-xl-9">
+        <div class="card shadow-sm mb-4">
+            <div class="card-header bg-white py-3 d-flex flex-wrap justify-content-between align-items-center gap-2">
+                <div class="d-flex align-items-center gap-2">
+                    <h6 class="fw-bold mb-0" id="editorTitle"><i class="bi bi-pencil-square text-primary me-2"></i>编辑模板</h6>
+                    <span id="builtinBadge" class="badge bg-warning-subtle text-warning border border-warning-subtle" style="display: none;">系统内置</span>
+                </div>
+                <div class="d-flex gap-2">
+                    <button class="btn btn-outline-danger btn-sm" id="deleteTemplateBtn" onclick="deleteCurrentTemplate()" style="display: none;">
+                        <i class="bi bi-trash me-1"></i>删除
+                    </button>
+                    <button class="btn btn-primary btn-sm px-3" id="saveTemplateBtn" onclick="saveTemplate()">
+                        <i class="bi bi-floppy me-1"></i>保存模板
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="row g-3 mb-3">
+                    <div class="col-12 col-md-6">
+                        <label class="form-label small fw-semibold">模板名称 (唯一标识):</label>
+                        <input type="text" id="tplNameInput" class="form-control" placeholder="例如: huawei_vlan_setup.j2">
+                    </div>
+                    <div class="col-12 col-md-6">
+                        <label class="form-label small fw-semibold">模板简述 (可选):</label>
+                        <input type="text" id="tplDescInput" class="form-control" placeholder="例如: 华为基础 VLAN 及网关接口创建模板">
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <label class="form-label small fw-semibold mb-0">模板正文 (Jinja2 格式):</label>
+                        <span class="text-muted small">支持 <code>{% raw %}{{ 变量 }}{% endraw %}</code>、<code>{% raw %}{% for item in list %}{% endraw %}</code> 等逻辑</span>
+                    </div>
+                    <textarea id="tplContentInput" class="form-control code-editor font-monospace" rows="14" placeholder="# 示例 Jinja2 模板
+system-view
+vlan {{ vlan_id }}
+ description {{ vlan_name }}
+#
+interface Vlanif{{ vlan_id }}
+ ip address {{ ip_address }} {{ subnet_mask }}
+#
+return"></textarea>
+                </div>
+            </div>
+        </div>
+
+        <!-- 模板调试渲染预览面板 -->
+        <div class="card shadow-sm">
+            <div class="card-header bg-white py-3">
+                <h6 class="fw-bold mb-0"><i class="bi bi-braces-asterisk text-info me-2"></i>模板预览与变量调试</h6>
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-12 col-md-5">
+                        <label class="form-label small fw-semibold">测试变量 (YAML 格式):</label>
+                        <textarea id="testVariablesInput" class="form-control code-editor font-monospace" rows="8" placeholder="vlan_id: 10
+vlan_name: Management_VLAN
+ip_address: 192.168.10.254
+subnet_mask: 255.255.255.0"></textarea>
+                        <button class="btn btn-outline-info w-100 mt-2" id="runPreviewBtn" onclick="previewCurrentTemplate()">
+                            <i class="bi bi-play-circle me-1"></i>渲染生成配置 (Preview)
+                        </button>
+                    </div>
+                    <div class="col-12 col-md-7">
+                        <label class="form-label small fw-semibold">实时渲染输出结果:</label>
+                        <pre class="code-view mb-0" id="renderedOutputPre" style="min-height: 220px;">点击左侧【渲染生成配置】查看实际生成的 CLI 命令...</pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+let templatesCache = [];
+let currentSelectedTemplateName = null;
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadTemplates();
+});
+
+// 加载模板列表
+async function loadTemplates() {
+    const container = document.getElementById('templatesListContainer');
+    container.innerHTML = `
+        <div class="text-center py-4 text-muted">
+            <div class="spinner-border spinner-border-sm text-primary me-2"></div>正在加载模板...
+        </div>
+    `;
+
+    try {
+        const res = await apiCall('/api/templates');
+        templatesCache = Array.isArray(res) ? res : (res.templates || []);
+
+        if (templatesCache.length === 0) {
+            container.innerHTML = `
+                <div class="text-center py-4 text-muted small">
+                    <i class="bi bi-file-earmark-x fs-3 d-block mb-1 text-secondary opacity-50"></i>
+                    暂无模板，点击右上角新建。
+                </div>
+            `;
+            createNewTemplate();
+            return;
+        }
+
+        renderTemplatesSidebar();
+
+        // 默认选中第一个或保留当前选中
+        if (currentSelectedTemplateName) {
+            selectTemplateByName(currentSelectedTemplateName);
+        } else {
+            const first = templatesCache[0];
+            const firstName = typeof first === 'string' ? first : (first.name || first.id);
+            selectTemplateByName(firstName);
+        }
+    } catch (err) {
+        container.innerHTML = `
+            <div class="text-center py-4 text-danger small">
+                加载模板失败: ${escapeHtml(err.message)}
+            </div>
+        `;
+        showToast('加载配置模板列表失败: ' + err.message, 'error');
+    }
+}
+
+// 渲染左侧模板列表项
+function renderTemplatesSidebar() {
+    const container = document.getElementById('templatesListContainer');
+
+    container.innerHTML = templatesCache.map(t => {
+        const name = typeof t === 'string' ? t : (t.name || t.id);
+        const desc = (typeof t === 'object' && t.description) ? t.description : '';
+        const isBuiltin = (typeof t === 'object' && t.builtin);
+
+        return `
+            <a href="javascript:void(0)" class="list-group-item list-group-item-action d-flex align-items-center justify-content-between py-2 px-3 tpl-item" id="tpl_item_${escapeHtml(name)}" onclick="selectTemplateByName('${escapeHtml(name)}')">
+                <div class="text-truncate me-2">
+                    <div class="fw-semibold text-truncate small">${escapeHtml(name)}</div>
+                    ${desc ? `<div class="text-muted text-truncate" style="font-size: 0.75rem;">${escapeHtml(desc)}</div>` : ''}
+                </div>
+                ${isBuiltin ? '<span class="badge bg-warning-subtle text-warning border border-warning-subtle" style="font-size:0.65rem;">内置</span>' : ''}
+            </a>
+        `;
+    }).join('');
+}
+
+// 选中模板并读取内容
+async function selectTemplateByName(name) {
+    currentSelectedTemplateName = name;
+
+    // 切换高亮选中样式
+    document.querySelectorAll('.tpl-item').forEach(el => el.classList.remove('active'));
+    const activeEl = document.getElementById(`tpl_item_${name}`);
+    if (activeEl) activeEl.classList.add('active');
+
+    document.getElementById('editorTitle').innerHTML = `<i class="bi bi-pencil-square text-primary me-2"></i>编辑模板: ${escapeHtml(name)}`;
+    document.getElementById('deleteTemplateBtn').style.display = 'inline-block';
+
+    try {
+        const res = await apiCall(`/api/templates/${encodeURIComponent(name)}`);
+        document.getElementById('tplNameInput').value = res.name || name;
+        document.getElementById('tplDescInput').value = res.description || '';
+        document.getElementById('tplContentInput').value = res.content || res.template || '';
+        
+        if (res.default_variables || res.variables) {
+            document.getElementById('testVariablesInput').value = res.default_variables || res.variables || '';
+        }
+
+        const builtinBadge = document.getElementById('builtinBadge');
+        if (res.builtin) {
+            builtinBadge.style.display = 'inline-block';
+        } else {
+            builtinBadge.style.display = 'none';
+        }
+    } catch (err) {
+        showToast(`读取模板 [${name}] 内容失败: ${err.message}`, 'error');
+    }
+}
+
+// 新建模板重置表单
+function createNewTemplate() {
+    currentSelectedTemplateName = null;
+    document.querySelectorAll('.tpl-item').forEach(el => el.classList.remove('active'));
+
+    document.getElementById('editorTitle').innerHTML = '<i class="bi bi-file-earmark-plus text-primary me-2"></i>新建配置模板';
+    document.getElementById('deleteTemplateBtn').style.display = 'none';
+    document.getElementById('builtinBadge').style.display = 'none';
+
+    document.getElementById('tplNameInput').value = '';
+    document.getElementById('tplDescInput').value = '';
+    document.getElementById('tplContentInput').value = '';
+    document.getElementById('testVariablesInput').value = '';
+    document.getElementById('renderedOutputPre').textContent = '点击左侧【渲染生成配置】查看实际生成的 CLI 命令...';
+    document.getElementById('tplNameInput').focus();
+}
+
+// 保存模板
+async function saveTemplate() {
+    const name = document.getElementById('tplNameInput').value.trim();
+    const description = document.getElementById('tplDescInput').value.trim();
+    const content = document.getElementById('tplContentInput').value;
+    const default_variables = document.getElementById('testVariablesInput').value;
+
+    if (!name) {
+        showToast('请输入模板名称！', 'warning');
+        document.getElementById('tplNameInput').focus();
+        return;
+    }
+    if (!content) {
+        showToast('模板正文不能为空！', 'warning');
+        return;
+    }
+
+    const saveBtn = document.getElementById('saveTemplateBtn');
+    showLoading(saveBtn, '保存中...');
+
+    try {
+        const payload = {
+            name: name,
+            description: description,
+            content: content,
+            default_variables: default_variables
+        };
+
+        await apiCall(`/api/templates/${encodeURIComponent(name)}`, 'POST', payload);
+        showToast(`模板 [${name}] 保存成功`, 'success');
+        currentSelectedTemplateName = name;
+        await loadTemplates();
+    } catch (err) {
+        showToast('保存模板失败: ' + err.message, 'error');
+    } finally {
+        hideLoading(saveBtn);
+    }
+}
+
+// 删除模板
+async function deleteCurrentTemplate() {
+    if (!currentSelectedTemplateName) return;
+
+    if (!confirmAction(`确定要删除模板 [${currentSelectedTemplateName}] 吗？`)) {
+        return;
+    }
+
+    try {
+        await apiCall(`/api/templates/${encodeURIComponent(currentSelectedTemplateName)}`, 'DELETE');
+        showToast(`模板 [${currentSelectedTemplateName}] 已删除`, 'success');
+        currentSelectedTemplateName = null;
+        await loadTemplates();
+    } catch (err) {
+        showToast('删除失败: ' + err.message, 'error');
+    }
+}
+
+// 预览当前模板渲染
+async function previewCurrentTemplate() {
+    const content = document.getElementById('tplContentInput').value;
+    const variables = document.getElementById('testVariablesInput').value;
+    const name = document.getElementById('tplNameInput').value.trim();
+
+    if (!content) {
+        showToast('模板正文为空，无法预览', 'warning');
+        return;
+    }
+
+    const btn = document.getElementById('runPreviewBtn');
+    showLoading(btn, '正在渲染...');
+
+    try {
+        const res = await apiCall('/api/templates/preview', 'POST', {
+            name: name,
+            template_content: content,
+            variables: variables
+        });
+
+        document.getElementById('renderedOutputPre').textContent = res.rendered || res.output || res.result || '无输出';
+        showToast('渲染完成', 'info');
+    } catch (err) {
+        document.getElementById('renderedOutputPre').textContent = `渲染异常:\n${err.message}`;
+        showToast('预览渲染失败: ' + err.message, 'error');
+    } finally {
+        hideLoading(btn);
+    }
+}
+</script>
+{% endblock %}

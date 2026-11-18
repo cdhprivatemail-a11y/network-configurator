@@ -1,0 +1,616 @@
+{% extends "base.html" %}
+
+{% block title %}批量配置{% endblock %}
+
+{% block content %}
+<div class="mb-4">
+    <h3 class="fw-bold mb-1"><i class="bi bi-terminal text-primary me-2"></i>网络批量配置</h3>
+    <p class="text-secondary mb-0">针对华为 eNSP 与华三 HCL 模拟设备进行直接命令行下发或 Jinja2 模板批量推送</p>
+</div>
+
+<!-- 选项卡切换 -->
+<ul class="nav nav-tabs nav-tabs-bordered mb-4" id="configTabs" role="tablist">
+    <li class="nav-item" role="presentation">
+        <button class="nav-link active fw-semibold" id="direct-tab" data-bs-toggle="tab" data-bs-target="#direct-pane" type="button" role="tab" aria-controls="direct-pane" aria-selected="true">
+            <i class="bi bi-command me-2"></i>直接命令下发 (Direct Commands)
+        </button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link fw-semibold" id="template-tab" data-bs-toggle="tab" data-bs-target="#template-pane" type="button" role="tab" aria-controls="template-pane" aria-selected="false">
+            <i class="bi bi-file-earmark-code me-2"></i>模板批量配置 (Template Config)
+        </button>
+    </li>
+</ul>
+
+<div class="tab-content" id="configTabsContent">
+    <!-- ==================== Tab 1: 直接命令下发 ==================== -->
+    <div class="tab-pane fade show active" id="direct-pane" role="tabpanel" aria-labelledby="direct-tab">
+        <div class="row g-4">
+            <!-- 左侧：设备选择栏 -->
+            <div class="col-12 col-lg-4">
+                <div class="card shadow-sm h-100">
+                    <div class="card-header bg-white py-3">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <h6 class="fw-bold mb-0"><i class="bi bi-check2-square text-primary me-2"></i>目标设备选择</h6>
+                            <span class="badge bg-primary-subtle text-primary" id="directSelectedCount">已选: 0 台</span>
+                        </div>
+                        <div class="d-flex gap-2">
+                            <select id="directGroupFilter" class="form-select form-select-sm" onchange="filterDirectDeviceList()">
+                                <option value="">全部分组</option>
+                            </select>
+                            <button class="btn btn-outline-secondary btn-sm text-nowrap" onclick="toggleSelectAll('direct', true)">全选</button>
+                            <button class="btn btn-outline-secondary btn-sm text-nowrap" onclick="toggleInvert('direct')">反选</button>
+                        </div>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="device-select-box p-2" id="directDeviceList">
+                            <div class="text-center py-4 text-muted">
+                                <div class="spinner-border spinner-border-sm text-primary me-2"></div>加载设备列表中...
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 右侧：命令输入与执行结果 -->
+            <div class="col-12 col-lg-8">
+                <!-- 命令输入卡片 -->
+                <div class="card shadow-sm mb-4">
+                    <div class="card-header bg-white py-3 d-flex flex-wrap justify-content-between align-items-center gap-2">
+                        <h6 class="fw-bold mb-0"><i class="bi bi-code-slash text-success me-2"></i>CLI 命令行脚本输入 <span class="badge bg-danger-subtle text-danger border ms-1">内置高危命令防呆防火墙</span></h6>
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-sm btn-outline-danger py-0" onclick="fillHighRiskSample()">
+                                <i class="bi bi-shield-exclamation me-1"></i>高危拦截测试样例
+                            </button>
+                            <button class="btn btn-sm btn-outline-primary py-0" onclick="precheckDirectCommands()">
+                                <i class="bi bi-shield-check me-1"></i>静态安全预审
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label class="form-label small fw-semibold text-secondary">命令列表 (支持同时输入配置命令或查看命令，每行一条):</label>
+                            <textarea id="directCommandsText" class="form-control code-editor font-monospace" rows="10" placeholder="# 示例华为配置命令:
+system-view
+vlan 100
+ description Test-Vlan-100
+quit
+display current-configuration | include vlan
+return"></textarea>
+                        </div>
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="directConfigMode" checked>
+                                <label class="form-check-label small" for="directConfigMode">开启自动进入配置模式 (Auto System-View / Sys)</label>
+                            </div>
+                            <button class="btn btn-primary px-4" id="executeDirectBtn" onclick="executeDirectCommands()">
+                                <i class="bi bi-play-fill me-1"></i>下发执行命令
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 执行结果卡片 -->
+                <div class="card shadow-sm" id="directResultsContainer" style="display: none;">
+                    <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+                        <h6 class="fw-bold mb-0"><i class="bi bi-terminal-split text-info me-2"></i>执行结果输出</h6>
+                        <button class="btn btn-sm btn-outline-secondary" onclick="clearResults('direct')">清空</button>
+                    </div>
+                    <div class="card-body" id="directResultsContent">
+                        <!-- 结果卡片容器 -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== Tab 2: 模板批量配置 ==================== -->
+    <div class="tab-pane fade" id="template-pane" role="tabpanel" aria-labelledby="template-tab">
+        <div class="row g-4">
+            <!-- 左侧：设备选择栏 -->
+            <div class="col-12 col-lg-4">
+                <div class="card shadow-sm h-100">
+                    <div class="card-header bg-white py-3">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <h6 class="fw-bold mb-0"><i class="bi bi-check2-square text-primary me-2"></i>目标设备选择</h6>
+                            <span class="badge bg-primary-subtle text-primary" id="tplSelectedCount">已选: 0 台</span>
+                        </div>
+                        <div class="d-flex gap-2">
+                            <select id="tplGroupFilter" class="form-select form-select-sm" onchange="filterTplDeviceList()">
+                                <option value="">全部分组</option>
+                            </select>
+                            <button class="btn btn-outline-secondary btn-sm text-nowrap" onclick="toggleSelectAll('tpl', true)">全选</button>
+                            <button class="btn btn-outline-secondary btn-sm text-nowrap" onclick="toggleInvert('tpl')">反选</button>
+                        </div>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="device-select-box p-2" id="tplDeviceList">
+                            <div class="text-center py-4 text-muted">
+                                <div class="spinner-border spinner-border-sm text-primary me-2"></div>加载设备列表中...
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 右侧：模板选择、变量与预览执行 -->
+            <div class="col-12 col-lg-8">
+                <!-- 模板与变量输入 -->
+                <div class="card shadow-sm mb-4">
+                    <div class="card-header bg-white py-3">
+                        <h6 class="fw-bold mb-0"><i class="bi bi-file-earmark-diff text-primary me-2"></i>模板与动态渲染参数</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label class="form-label small fw-semibold">选择 Jinja2 配置模板:</label>
+                            <select id="templateSelector" class="form-select" onchange="onTemplateSelectionChange()">
+                                <option value="">-- 请选择配置模板 --</option>
+                            </select>
+                        </div>
+
+                        <div class="mb-3">
+                            <div class="d-flex justify-content-between align-items-center mb-1">
+                                <label class="form-label small fw-semibold mb-0">变量配置 (YAML / 键值对格式):</label>
+                                <span class="text-secondary small">用于渲染模板中的 {{ "{{ 变量 }}" }}</span>
+                            </div>
+                            <textarea id="templateVariablesText" class="form-control code-editor font-monospace" rows="8" placeholder="# YAML 示例参数:
+vlan_id: 200
+vlan_name: Office_LAN
+ip_address: 192.168.200.1
+subnet_mask: 255.255.255.0
+ospf_area: 0"></textarea>
+                        </div>
+
+                        <div class="d-flex justify-content-end gap-2">
+                            <button class="btn btn-outline-info" id="previewTemplateBtn" onclick="previewTemplateConfig()">
+                                <i class="bi bi-eye me-1"></i>预览渲染配置 (Preview)
+                            </button>
+                            <button class="btn btn-success" id="executeTemplateBtn" onclick="executeTemplateConfig()">
+                                <i class="bi bi-send-check me-1"></i>批量推送到选中设备
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 模板预览面板 -->
+                <div class="card shadow-sm mb-4" id="templatePreviewCard" style="display: none;">
+                    <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+                        <h6 class="fw-bold mb-0 text-info"><i class="bi bi-file-text me-2"></i>渲染结果预览</h6>
+                        <button type="button" class="btn-close" aria-label="关闭预览" onclick="document.getElementById('templatePreviewCard').style.display='none'"></button>
+                    </div>
+                    <div class="card-body">
+                        <pre class="code-view mb-0" id="templatePreviewContent"></pre>
+                    </div>
+                </div>
+
+                <!-- 模板执行结果面板 -->
+                <div class="card shadow-sm" id="tplResultsContainer" style="display: none;">
+                    <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+                        <h6 class="fw-bold mb-0"><i class="bi bi-terminal-split text-info me-2"></i>执行结果输出</h6>
+                        <button class="btn btn-sm btn-outline-secondary" onclick="clearResults('tpl')">清空</button>
+                    </div>
+                    <div class="card-body" id="tplResultsContent">
+                        <!-- 结果卡片容器 -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 高危 CLI 命令防呆防火墙拦截弹窗 -->
+<div class="modal fade" id="guardrailAlertModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content border-0 shadow-lg">
+            <div class="modal-header bg-danger text-white py-2">
+                <h6 class="modal-title fw-bold"><i class="bi bi-shield-fill-exclamation me-2"></i>高危 CLI 命令防呆防火墙拦截告警 (Command Guardrail)</h6>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-warning small mb-3">
+                    <i class="bi bi-exclamation-triangle-fill me-1"></i>
+                    静态语义预审引擎在待下发脚本中检测到以下可能导致<b>设备重启、管理失联或核心路由震荡</b>的高危指令，已自动阻断下发：
+                </div>
+                <div class="table-responsive" style="max-height: 280px; overflow-y: auto;">
+                    <table class="table table-sm table-bordered align-middle mb-0 small">
+                        <thead class="table-light">
+                            <tr><th>行号</th><th>风险级别</th><th>触发规则</th><th>风险命令行</th><th>影响评估</th></tr>
+                        </thead>
+                        <tbody id="guardrailFindingsBody"></tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-footer bg-light py-2">
+                <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">取消下发并修改脚本 (推荐)</button>
+                <button type="button" class="btn btn-sm btn-danger" id="btnForceOverrideExec" onclick="confirmForceOverrideDirect()">
+                    <i class="bi bi-unlock-fill me-1"></i>已知晓生产风险，强制授权下发
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+let globalDevices = [];
+let globalTemplates = [];
+
+document.addEventListener('DOMContentLoaded', () => {
+    initConfigurePage();
+});
+
+async function initConfigurePage() {
+    await Promise.all([loadDevicesForConfig(), loadTemplatesList()]);
+}
+
+// 加载设备列表
+async function loadDevicesForConfig() {
+    try {
+        const res = await apiCall('/api/devices');
+        globalDevices = Array.isArray(res) ? res : (res.devices || []);
+        
+        populateGroupDropdown('directGroupFilter');
+        populateGroupDropdown('tplGroupFilter');
+
+        renderDeviceCheckboxes('direct');
+        renderDeviceCheckboxes('tpl');
+    } catch (err) {
+        showToast('加载设备列表失败: ' + err.message, 'error');
+    }
+}
+
+// 加载模板列表
+async function loadTemplatesList() {
+    try {
+        const res = await apiCall('/api/templates');
+        globalTemplates = Array.isArray(res) ? res : (res.templates || []);
+        
+        const selector = document.getElementById('templateSelector');
+        selector.innerHTML = '<option value="">-- 请选择配置模板 --</option>';
+
+        globalTemplates.forEach(t => {
+            const name = typeof t === 'string' ? t : (t.name || t.id);
+            const desc = (typeof t === 'object' && t.description) ? ` (${t.description})` : '';
+            const opt = document.createElement('option');
+            opt.value = name;
+            opt.textContent = `${name}${desc}`;
+            selector.appendChild(opt);
+        });
+    } catch (err) {
+        showToast('加载配置模板列表失败: ' + err.message, 'error');
+    }
+}
+
+// 填充分组下拉
+function populateGroupDropdown(selectId) {
+    const el = document.getElementById(selectId);
+    if (!el) return;
+    const groups = new Set();
+    globalDevices.forEach(d => {
+        if (d.group && d.group.trim()) groups.add(d.group.trim());
+    });
+    let html = '<option value="">全部分组</option>';
+    groups.forEach(g => {
+        html += `<option value="${escapeHtml(g)}">${escapeHtml(g)}</option>`;
+    });
+    el.innerHTML = html;
+}
+
+// 渲染复选框列表
+function renderDeviceCheckboxes(prefix) {
+    const container = document.getElementById(`${prefix}DeviceList`);
+    const groupFilter = document.getElementById(`${prefix}GroupFilter`).value;
+
+    const filtered = globalDevices.filter(d => !groupFilter || d.group === groupFilter);
+
+    if (filtered.length === 0) {
+        container.innerHTML = '<div class="text-center py-4 text-muted small">无匹配设备</div>';
+        updateSelectedCount(prefix);
+        return;
+    }
+
+    container.innerHTML = filtered.map(d => `
+        <div class="device-select-item d-flex align-items-center justify-content-between">
+            <div class="form-check mb-0">
+                <input class="form-check-input ${prefix}-device-cb" type="checkbox" value="${escapeHtml(d.name)}" id="${prefix}_dev_${escapeHtml(d.name)}" onchange="updateSelectedCount('${prefix}')">
+                <label class="form-check-label fw-semibold small text-dark" for="${prefix}_dev_${escapeHtml(d.name)}">
+                    ${escapeHtml(d.name)}
+                </label>
+            </div>
+            <div>
+                ${renderDeviceTypeBadge(d.device_type)}
+            </div>
+        </div>
+    `).join('');
+
+    updateSelectedCount(prefix);
+}
+
+function filterDirectDeviceList() {
+    renderDeviceCheckboxes('direct');
+}
+
+function filterTplDeviceList() {
+    renderDeviceCheckboxes('tpl');
+}
+
+function updateSelectedCount(prefix) {
+    const cbs = document.querySelectorAll(`.${prefix}-device-cb:checked`);
+    const countBadge = document.getElementById(`${prefix}SelectedCount`);
+    if (countBadge) {
+        countBadge.textContent = `已选: ${cbs.length} 台`;
+    }
+}
+
+function toggleSelectAll(prefix, checked) {
+    selectAllCheckboxes(`.${prefix}-device-cb`, checked);
+    updateSelectedCount(prefix);
+}
+
+function toggleInvert(prefix) {
+    const cbs = document.querySelectorAll(`.${prefix}-device-cb`);
+    cbs.forEach(cb => { cb.checked = !cb.checked; });
+    updateSelectedCount(prefix);
+}
+
+function fillHighRiskSample() {
+    document.getElementById('directCommandsText').value = `system-view
+interface GigabitEthernet0/0/0
+ shutdown
+ undo ip address
+quit
+undo ospf 1
+reset saved-configuration
+return`;
+    showToast('已填入含高危指令的测试脚本，可点击「静态安全预审」或「下发执行命令」体验防呆拦截', 'info');
+}
+
+async function precheckDirectCommands() {
+    const commandsText = document.getElementById('directCommandsText').value.trim();
+    if (!commandsText) {
+        showToast('请先输入 CLI 命令内容', 'warning');
+        return;
+    }
+    try {
+        const res = await apiCall('/api/guardrail/check', 'POST', { commands: commandsText });
+        if (res.passed) {
+            showToast(`静态安全预审通过！共扫描 ${res.total_lines_checked} 行命令，未发现高危破坏性指令`, 'success');
+        } else {
+            showGuardrailModal(res.findings || [], false);
+        }
+    } catch (e) {
+        showToast('预审请求失败: ' + e.message, 'error');
+    }
+}
+
+function showGuardrailModal(findings, allowForceOverride = true) {
+    const tbody = document.getElementById('guardrailFindingsBody');
+    tbody.innerHTML = findings.map(f => {
+        const badgeCls = f.severity === 'CRITICAL' ? 'bg-danger' : 'bg-warning text-dark';
+        return `<tr>
+            <td class="text-center fw-bold">#${f.line_no}</td>
+            <td><span class="badge ${badgeCls}">${escapeHtml(f.severity_label)}</span></td>
+            <td class="fw-semibold">${escapeHtml(f.rule_id)} · ${escapeHtml(f.title)}</td>
+            <td><code class="text-danger fw-bold">${escapeHtml(f.command)}</code></td>
+            <td class="text-secondary">${escapeHtml(f.reason)}</td>
+        </tr>`;
+    }).join('');
+    document.getElementById('btnForceOverrideExec').style.display = allowForceOverride ? 'inline-block' : 'none';
+    const modal = new bootstrap.Modal(document.getElementById('guardrailAlertModal'));
+    modal.show();
+}
+
+function confirmForceOverrideDirect() {
+    const modalEl = document.getElementById('guardrailAlertModal');
+    const modal = bootstrap.Modal.getInstance(modalEl);
+    if (modal) modal.hide();
+    executeDirectCommands(true);
+}
+
+// 执行直接命令
+async function executeDirectCommands(forceOverride = false) {
+    const selectedDevices = getSelectedDevices('.direct-device-cb');
+    if (selectedDevices.length === 0) {
+        showToast('请先至少勾选一台目标网络设备！', 'warning');
+        return;
+    }
+
+    const commandsText = document.getElementById('directCommandsText').value.trim();
+    if (!commandsText) {
+        showToast('请输入要下发的命令行内容！', 'warning');
+        return;
+    }
+
+    const btn = document.getElementById('executeDirectBtn');
+    showLoading(btn, '正在下发命令...');
+
+    const resultsContainer = document.getElementById('directResultsContainer');
+    const resultsContent = document.getElementById('directResultsContent');
+    resultsContainer.style.display = 'block';
+    resultsContent.innerHTML = `
+        <div class="text-center py-5 text-muted">
+            <div class="spinner-border text-primary me-2"></div>正在进行安全预审并连接设备批量执行命令，请稍候...
+        </div>
+    `;
+
+    try {
+        const payload = {
+            devices: selectedDevices,
+            commands: commandsText.split('\n').map(c => c.trim()).filter(c => c && !c.startsWith('#')),
+            raw_commands: commandsText,
+            config_mode: document.getElementById('directConfigMode').checked,
+            force_override: forceOverride
+        };
+
+        const res = await apiCall('/api/configure/direct', 'POST', payload);
+        if (res.guardrail_triggered) {
+            resultsContainer.style.display = 'none';
+            showGuardrailModal(res.findings || [], true);
+            showToast(res.error || '触发高危命令防呆拦截', 'warning');
+            return;
+        }
+        renderExecutionResults(resultsContent, res);
+        showToast('批量配置命令已执行完成', 'success');
+    } catch (err) {
+        resultsContent.innerHTML = `
+            <div class="alert alert-danger mb-0">
+                <i class="bi bi-exclamation-triangle-fill me-2"></i>执行失败: ${escapeHtml(err.message)}
+            </div>
+        `;
+        showToast('执行异常: ' + err.message, 'error');
+    } finally {
+        hideLoading(btn);
+    }
+}
+
+// 模板选择变更处理
+async function onTemplateSelectionChange() {
+    const templateName = document.getElementById('templateSelector').value;
+    if (!templateName) return;
+
+    try {
+        const res = await apiCall(`/api/templates/${encodeURIComponent(templateName)}`);
+        if (res && res.default_variables) {
+            document.getElementById('templateVariablesText').value = res.default_variables;
+        }
+    } catch (e) {
+        // 静默或忽略无默认变量
+    }
+}
+
+// 预览渲染配置
+async function previewTemplateConfig() {
+    const templateName = document.getElementById('templateSelector').value;
+    if (!templateName) {
+        showToast('请先选择一个配置模板', 'warning');
+        return;
+    }
+
+    const variablesText = document.getElementById('templateVariablesText').value;
+    const btn = document.getElementById('previewTemplateBtn');
+    showLoading(btn, '渲染预览中...');
+
+    try {
+        const res = await apiCall('/api/templates/preview', 'POST', {
+            template: templateName,
+            variables: variablesText
+        });
+
+        const previewCard = document.getElementById('templatePreviewCard');
+        const previewContent = document.getElementById('templatePreviewContent');
+        previewCard.style.display = 'block';
+        previewContent.textContent = res.rendered || res.output || res.result || JSON.stringify(res, null, 2);
+        showToast('模板预览渲染成功', 'info');
+    } catch (err) {
+        showToast('预览渲染失败: ' + err.message, 'error');
+    } finally {
+        hideLoading(btn);
+    }
+}
+
+// 执行模板配置
+async function executeTemplateConfig() {
+    const selectedDevices = getSelectedDevices('.tpl-device-cb');
+    if (selectedDevices.length === 0) {
+        showToast('请先勾选目标设备！', 'warning');
+        return;
+    }
+
+    const templateName = document.getElementById('templateSelector').value;
+    if (!templateName) {
+        showToast('请选择要执行的配置模板！', 'warning');
+        return;
+    }
+
+    const variablesText = document.getElementById('templateVariablesText').value;
+    const btn = document.getElementById('executeTemplateBtn');
+    showLoading(btn, '下发模板配置中...');
+
+    const resultsContainer = document.getElementById('tplResultsContainer');
+    const resultsContent = document.getElementById('tplResultsContent');
+    resultsContainer.style.display = 'block';
+    resultsContent.innerHTML = `
+        <div class="text-center py-5 text-muted">
+            <div class="spinner-border text-primary me-2"></div>正在下发模板配置，请稍候...
+        </div>
+    `;
+
+    try {
+        const payload = {
+            devices: selectedDevices,
+            template: templateName,
+            variables: variablesText
+        };
+
+        const res = await apiCall('/api/configure/template', 'POST', payload);
+        renderExecutionResults(resultsContent, res);
+        showToast('模板批量配置推送完成', 'success');
+    } catch (err) {
+        resultsContent.innerHTML = `
+            <div class="alert alert-danger mb-0">
+                <i class="bi bi-exclamation-triangle-fill me-2"></i>执行失败: ${escapeHtml(err.message)}
+            </div>
+        `;
+        showToast('下发异常: ' + err.message, 'error');
+    } finally {
+        hideLoading(btn);
+    }
+}
+
+// 渲染批量执行输出结果面板
+function renderExecutionResults(container, response) {
+    const results = response.results || response.data || response;
+    
+    // 如果返回是对象键值对映射或者数组
+    let items = [];
+    if (Array.isArray(results)) {
+        items = results;
+    } else if (typeof results === 'object' && results !== null) {
+        items = Object.keys(results).map(key => ({
+            device: key,
+            output: results[key].output || results[key],
+            success: results[key].success !== undefined ? results[key].success : true,
+            error: results[key].error || ''
+        }));
+    }
+
+    if (items.length === 0) {
+        container.innerHTML = '<div class="alert alert-info">无返回执行输出。</div>';
+        return;
+    }
+
+    container.innerHTML = items.map((item, idx) => {
+        const devName = item.device || item.device_name || `设备 ${idx + 1}`;
+        const isSuccess = item.success !== false && !item.error;
+        const statusBadge = isSuccess
+            ? '<span class="badge bg-success-subtle text-success"><i class="bi bi-check-circle-fill me-1"></i>成功</span>'
+            : '<span class="badge bg-danger-subtle text-danger"><i class="bi bi-x-circle-fill me-1"></i>异常</span>';
+        const outputText = item.output || item.error || '(无返回输出文本)';
+
+        return `
+            <div class="card result-card mb-3 ${isSuccess ? 'success' : 'danger'}">
+                <div class="card-header bg-light d-flex justify-content-between align-items-center py-2">
+                    <div class="fw-bold d-flex align-items-center gap-2">
+                        <i class="bi bi-hdd-rack text-secondary"></i>
+                        <span>${escapeHtml(devName)}</span>
+                        ${statusBadge}
+                    </div>
+                    <button class="btn btn-sm btn-link text-decoration-none" type="button" data-bs-toggle="collapse" data-bs-target="#collapseRes_${idx}">
+                        折叠/展开
+                    </button>
+                </div>
+                <div class="collapse show" id="collapseRes_${idx}">
+                    <div class="result-body">${escapeHtml(outputText)}</div>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function clearResults(prefix) {
+    document.getElementById(`${prefix}ResultsContainer`).style.display = 'none';
+    document.getElementById(`${prefix}ResultsContent`).innerHTML = '';
+}
+</script>
+{% endblock %}

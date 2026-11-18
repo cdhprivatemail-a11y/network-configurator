@@ -1,0 +1,57 @@
+devices:
+- name: R1
+  host: 192.168.56.101
+  port: 22
+  username: admin
+  password: ENC:v1:LwEZKgEuV1tU
+  device_type: huawei_vrp
+  description: 核心路由器
+  group: Core
+- name: SW1
+  host: 192.168.56.102
+  port: 23
+  username: admin
+  password: ENC:v1:LwEZKgEuV1tU
+  device_type: huawei_vrp_telnet
+  description: 接入交换机
+  group: Access
+- name: H3C-R1
+  host: 192.168.56.201
+  port: 22
+  username: admin
+  password: ENC:v1:LwEZKgEuV1tU
+  device_type: hp_comware
+  description: H3C核心路由器
+  group: Core
+- name: RouterA
+  host: 127.0.0.1
+  port: 30001
+  username: admin
+  password: ENC:v1:LwEZKgEuV1tU
+  device_type: hp_comware_telnet
+  group: 本地拓扑克隆
+  description: 本机活动串口实况扫描 (127.0.0.1:30001-30004) 节点 (HCL-MSR3620)
+- name: RouterB
+  host: 127.0.0.1
+  port: 30002
+  username: admin
+  password: ENC:v1:LwEZKgEuV1tU
+  device_type: hp_comware_telnet
+  group: 本地拓扑克隆
+  description: 本机活动串口实况扫描 (127.0.0.1:30001-30004) 节点 (HCL-MSR3620)
+- name: RouterC
+  host: 127.0.0.1
+  port: 30003
+  username: admin
+  password: ENC:v1:LwEZKgEuV1tU
+  device_type: hp_comware_telnet
+  group: 本地拓扑克隆
+  description: 本机活动串口实况扫描 (127.0.0.1:30001-30004) 节点 (HCL-MSR3620)
+- name: RouterD
+  host: 127.0.0.1
+  port: 30004
+  username: admin
+  password: ENC:v1:LwEZKgEuV1tU
+  device_type: hp_comware_telnet
+  group: 本地拓扑克隆
+  description: 本机活动串口实况扫描 (127.0.0.1:30001-30004) 节点 (HCL-MSR3620)

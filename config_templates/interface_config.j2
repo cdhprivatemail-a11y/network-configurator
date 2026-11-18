@@ -1,0 +1,9 @@
+system-view
+interface {{ interface_name }}
+ ip address {{ ip_address }} {{ subnet_mask }}
+{% if description %}
+ description {{ description }}
+{% endif %}
+ undo shutdown
+quit
+return

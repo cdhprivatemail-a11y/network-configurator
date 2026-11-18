@@ -1,0 +1,402 @@
+{% extends "base.html" %}
+
+{% block title %}仪表盘{% endblock %}
+
+{% block content %}
+<div class="row align-items-center mb-4">
+    <div class="col">
+        <h3 class="fw-bold mb-1"><i class="bi bi-speedometer2 text-primary me-2"></i>系统仪表盘</h3>
+        <p class="text-secondary mb-0">实时查看网络拓扑设备概况、配置状态与最近运维动作</p>
+    </div>
+    <div class="col-auto">
+        <button id="refreshStatsBtn" class="btn btn-outline-secondary btn-sm" onclick="loadDashboardData()">
+            <i class="bi bi-arrow-clockwise me-1"></i>刷新统计
+        </button>
+    </div>
+</div>
+
+<!-- 统计卡片行 -->
+<div class="row g-3 mb-4">
+    <div class="col-12 col-sm-6 col-xl-3">
+        <div class="card stat-card card-hover shadow-sm border-start border-primary border-4">
+            <div class="card-body">
+                <div class="text-uppercase tracking-wider text-muted small fw-semibold mb-1">设备总数</div>
+                <div class="d-flex align-items-baseline">
+                    <h2 class="fw-bold mb-0 text-dark" id="statTotalDevices">-</h2>
+                    <span class="text-muted ms-2 small">台入网设备</span>
+                </div>
+                <div class="text-muted small mt-2 d-flex align-items-center">
+                    <i class="bi bi-check-circle text-success me-1"></i>已纳管所有路由器/交换机
+                </div>
+                <i class="bi bi-router stat-icon text-primary"></i>
+            </div>
+        </div>
+    </div>
+    <div class="col-12 col-sm-6 col-xl-3">
+        <div class="card stat-card card-hover shadow-sm border-start border-success border-4">
+            <div class="card-body">
+                <div class="text-uppercase tracking-wider text-muted small fw-semibold mb-1">华为设备 (eNSP)</div>
+                <div class="d-flex align-items-baseline">
+                    <h2 class="fw-bold mb-0 text-success" id="statHuaweiDevices">-</h2>
+                    <span class="text-muted ms-2 small">台 VRP 架构</span>
+                </div>
+                <div class="text-muted small mt-2 d-flex align-items-center">
+                    <span class="badge badge-huawei me-1">huawei_vrp</span>仿真节点
+                </div>
+                <i class="bi bi-hdd-network stat-icon text-success"></i>
+            </div>
+        </div>
+    </div>
+    <div class="col-12 col-sm-6 col-xl-3">
+        <div class="card stat-card card-hover shadow-sm border-start border-info border-4">
+            <div class="card-body">
+                <div class="text-uppercase tracking-wider text-muted small fw-semibold mb-1">华三设备 (HCL)</div>
+                <div class="d-flex align-items-baseline">
+                    <h2 class="fw-bold mb-0 text-primary" id="statH3cDevices">-</h2>
+                    <span class="text-muted ms-2 small">台 Comware 架构</span>
+                </div>
+                <div class="text-muted small mt-2 d-flex align-items-center">
+                    <span class="badge badge-h3c me-1">hp_comware</span>仿真节点
+                </div>
+                <i class="bi bi-hdd-network stat-icon text-info"></i>
+            </div>
+        </div>
+    </div>
+    <div class="col-12 col-sm-6 col-xl-3">
+        <div class="card stat-card card-hover shadow-sm border-start border-warning border-4">
+            <div class="card-body">
+                <div class="text-uppercase tracking-wider text-muted small fw-semibold mb-1">备份总数</div>
+                <div class="d-flex align-items-baseline">
+                    <h2 class="fw-bold mb-0 text-warning" id="statTotalBackups">-</h2>
+                    <span class="text-muted ms-2 small">份配置快照</span>
+                </div>
+                <div class="text-muted small mt-2 d-flex align-items-center">
+                    <i class="bi bi-shield-check text-info me-1"></i>支持跨版本差异比对
+                </div>
+                <i class="bi bi-cloud-download stat-icon text-warning"></i>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 快捷操作区 -->
+<div class="card shadow-sm mb-4">
+    <div class="card-header bg-white py-3 border-0">
+        <h5 class="card-title fw-bold mb-0"><i class="bi bi-lightning-charge text-warning me-2"></i>快捷运维通道</h5>
+    </div>
+    <div class="card-body pt-0">
+        <div class="row g-3">
+            <div class="col-12 col-sm-6 col-lg-4 col-xl">
+                <a href="/features" class="card p-3 quick-action-card border h-100 border-primary border-opacity-50">
+                    <div class="d-flex align-items-center gap-3">
+                        <div class="action-icon-box bg-primary text-white">
+                            <i class="bi bi-ui-checks-grid"></i>
+                        </div>
+                        <div>
+                            <div class="fw-bold text-dark">100项特性向导</div>
+                            <div class="small text-secondary">8 域全栈特性与场景预设</div>
+                        </div>
+                    </div>
+                </a>
+            </div>
+            <div class="col-12 col-sm-6 col-lg-4 col-xl">
+                <a href="/audit" class="card p-3 quick-action-card border h-100 border-success border-opacity-50">
+                    <div class="d-flex align-items-center gap-3">
+                        <div class="action-icon-box bg-success text-white">
+                            <i class="bi bi-shield-check"></i>
+                        </div>
+                        <div>
+                            <div class="fw-bold text-dark">巡检与等保合规</div>
+                            <div class="small text-secondary">黄金基线评分与一键修复</div>
+                        </div>
+                    </div>
+                </a>
+            </div>
+            <div class="col-12 col-sm-6 col-lg-4 col-xl">
+                <a href="/topology" class="card p-3 quick-action-card border h-100">
+                    <div class="d-flex align-items-center gap-3">
+                        <div class="action-icon-box bg-info-subtle text-info">
+                            <i class="bi bi-diagram-3"></i>
+                        </div>
+                        <div>
+                            <div class="fw-bold text-dark">拓扑配置生成</div>
+                            <div class="small text-secondary">可视化画布自动推导配置</div>
+                        </div>
+                    </div>
+                </a>
+            </div>
+            <div class="col-12 col-sm-6 col-lg-4 col-xl">
+                <a href="/scan" class="card p-3 quick-action-card border h-100">
+                    <div class="d-flex align-items-center gap-3">
+                        <div class="action-icon-box bg-primary-subtle text-primary">
+                            <i class="bi bi-radar"></i>
+                        </div>
+                        <div>
+                            <div class="fw-bold text-dark">端口扫描识别</div>
+                            <div class="small text-secondary">嗅探 eNSP/HCL 开放端口</div>
+                        </div>
+                    </div>
+                </a>
+            </div>
+            <div class="col-12 col-sm-6 col-lg-4 col-xl">
+                <a href="/backup" class="card p-3 quick-action-card border h-100">
+                    <div class="d-flex align-items-center gap-3">
+                        <div class="action-icon-box bg-warning-subtle text-warning">
+                            <i class="bi bi-cloud-arrow-down"></i>
+                        </div>
+                        <div>
+                            <div class="fw-bold text-dark">备份与快照</div>
+                            <div class="small text-secondary">配置导出与跨版本 Diff</div>
+                        </div>
+                    </div>
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 下方两栏：仿真器拓扑连接指引 & 运维审计流水中心 -->
+<div class="row g-4">
+    <!-- 仿真平台支持与指南 -->
+    <div class="col-12 col-lg-6">
+        <div class="card shadow-sm h-100">
+            <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+                <h6 class="fw-bold mb-0"><i class="bi bi-info-square text-primary me-2"></i>企业级安全架构与仿真平台适配能力</h6>
+                <span class="badge bg-primary-subtle text-primary">v2.0 旗舰版</span>
+            </div>
+            <div class="card-body">
+                <div class="alert alert-light border small mb-3">
+                    <i class="bi bi-shield-lock text-success me-1"></i>
+                    <strong>安全与可靠性底座：</strong>已启用 <code>ENC:v1</code> 凭据加密 Vault、线程安全文件锁、SQLite 审计库、CLI 报错语义嗅探与下发前自动快照。
+                </div>
+                <div class="row g-3">
+                    <div class="col-12 col-md-6">
+                        <div class="p-3 border rounded-3 bg-light-subtle h-100">
+                            <h6 class="fw-bold text-success mb-2 d-flex align-items-center">
+                                <i class="bi bi-hdd me-2"></i>华为 eNSP (VRP) 适配
+                            </h6>
+                            <ul class="small text-secondary ps-3 mb-0">
+                                <li>支持 <strong>8 域 · 100 项</strong> 华为 VRP 原生命令生成与逆向 Undo。</li>
+                                <li>支持 Cloud 桥接 SSH/Telnet 与本地 Console 端口（2000~2050）免密直连。</li>
+                                <li>支持等保 2.0 三级基线自动打分与一键加固。</li>
+                            </ul>
+                        </div>
+                    </div>
+                    <div class="col-12 col-md-6">
+                        <div class="p-3 border rounded-3 bg-light-subtle h-100">
+                            <h6 class="fw-bold text-primary mb-2 d-flex align-items-center">
+                                <i class="bi bi-hdd-network me-2"></i>华三 HCL (Comware V7) 适配
+                            </h6>
+                            <ul class="small text-secondary ps-3 mb-0">
+                                <li>支持 <strong>8 域 · 100 项</strong> 华三 Comware V7 命令与 DRNI/IRF/SRv6。</li>
+                                <li>支持多设备动态宏变量（<code>&#123;&#123;device.name&#125;&#125;</code> / <code>&#123;&#123;device.seq&#125;&#125;</code>）防冲突并发推送。</li>
+                                <li>支持终端 <code>% Wrong parameter</code> 报错实时捕获。</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 运维变更与操作审计流水 (SQLite Job History) -->
+    <div class="col-12 col-lg-6">
+        <div class="card shadow-sm h-100">
+            <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+                <h6 class="fw-bold mb-0"><i class="bi bi-journal-check text-primary me-2"></i>运维变更与操作审计流水 (SQLite)</h6>
+                <div class="d-flex align-items-center gap-2">
+                    <span class="badge bg-secondary-subtle text-secondary" id="activityCountBadge">0 条记录</span>
+                    <button class="btn btn-sm btn-outline-danger py-0 px-2 small" onclick="clearAuditJobs()" title="清空历史记录"><i class="bi bi-trash"></i></button>
+                </div>
+            </div>
+            <div class="card-body p-0" style="max-height: 320px; overflow-y: auto;">
+                <div class="list-group list-group-flush small" id="activityList">
+                    <div class="p-4 text-center text-muted">
+                        <i class="bi bi-clock-history fs-3 d-block mb-2 text-secondary opacity-50"></i>
+                        <span>正在加载审计流水...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 历史任务审计详情弹窗 -->
+<div class="modal fade" id="jobDetailModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content border-0 shadow">
+            <div class="modal-header bg-dark text-white py-2 px-3">
+                <h6 class="modal-title fw-bold mb-0" id="jobDetailTitle"><i class="bi bi-file-earmark-medical text-info me-2"></i>运维任务审计详情</h6>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body p-3" id="jobDetailBody"></div>
+            <div class="modal-footer py-2 px-3 bg-light">
+                <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">关闭</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+async function loadDashboardData() {
+    const refreshBtn = document.getElementById('refreshStatsBtn');
+    if (refreshBtn) showLoading(refreshBtn, '刷新中...');
+
+    try {
+        let devices = [];
+        try {
+            const devRes = await apiCall('/api/devices');
+            devices = Array.isArray(devRes) ? devRes : (devRes.devices || []);
+        } catch (e) {
+            console.warn('获取设备列表失败:', e);
+        }
+
+        let backups = [];
+        try {
+            const backupRes = await apiCall('/api/backup/list');
+            backups = Array.isArray(backupRes) ? backupRes : (backupRes.backups || []);
+        } catch (e) {
+            console.warn('获取备份列表失败:', e);
+        }
+
+        let jobs = [];
+        try {
+            const jobRes = await apiCall('/api/jobs?limit=20');
+            jobs = jobRes.jobs || [];
+        } catch (e) {
+            console.warn('获取审计流水失败:', e);
+        }
+
+        const totalDevices = devices.length;
+        let huaweiCount = 0;
+        let h3cCount = 0;
+
+        devices.forEach(dev => {
+            const type = (dev.device_type || '').toLowerCase();
+            if (type.startsWith('huawei')) huaweiCount++;
+            else if (type.startsWith('hp_comware') || type.startsWith('h3c')) h3cCount++;
+        });
+
+        document.getElementById('statTotalDevices').textContent = totalDevices;
+        document.getElementById('statHuaweiDevices').textContent = huaweiCount;
+        document.getElementById('statH3cDevices').textContent = h3cCount;
+        document.getElementById('statTotalBackups').textContent = backups.length;
+
+        renderJobAuditList(jobs);
+    } catch (err) {
+        showToast('仪表盘数据更新失败: ' + err.message, 'error');
+    } finally {
+        if (refreshBtn) hideLoading(refreshBtn);
+    }
+}
+
+function renderJobAuditList(jobs) {
+    const activityList = document.getElementById('activityList');
+    const badge = document.getElementById('activityCountBadge');
+    if (!activityList) return;
+
+    if (!jobs || jobs.length === 0) {
+        activityList.innerHTML = `
+            <div class="p-4 text-center text-muted">
+                <i class="bi bi-inbox fs-3 d-block mb-2 text-secondary opacity-50"></i>
+                <span>暂无运维审计流水。</span>
+            </div>
+        `;
+        if (badge) badge.textContent = '0 条记录';
+        return;
+    }
+
+    if (badge) badge.textContent = `${jobs.length} 条流水`;
+
+    activityList.innerHTML = jobs.map(j => {
+        let statusBadge = '<span class="badge bg-success">成功</span>';
+        if (j.status === 'warning') statusBadge = '<span class="badge bg-warning text-dark">含告警</span>';
+        else if (j.status === 'failed') statusBadge = '<span class="badge bg-danger">失败</span>';
+
+        return `
+            <div class="list-group-item d-flex justify-content-between align-items-center gap-2 py-2 px-3">
+                <div class="text-truncate">
+                    <div class="d-flex align-items-center gap-2 mb-1">
+                        <span class="badge bg-dark">#${j.id}</span>
+                        ${statusBadge}
+                        <span class="fw-bold text-dark">${escapeHtml(j.job_type)}</span>
+                        <span class="text-primary small">[${escapeHtml(j.target_devices)}]</span>
+                    </div>
+                    <div class="text-secondary small text-truncate">${escapeHtml(j.summary)}</div>
+                </div>
+                <div class="d-flex flex-column align-items-end gap-1 flex-shrink-0">
+                    <span class="text-muted" style="font-size: 0.72rem;">${escapeHtml(j.timestamp)}</span>
+                    <button class="btn btn-sm btn-outline-primary py-0 px-2" style="font-size: 0.72rem;" onclick="viewJobDetail(${j.id})">
+                        <i class="bi bi-eye me-1"></i>详情
+                    </button>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+async function viewJobDetail(jobId) {
+    try {
+        const res = await apiCall(`/api/jobs/${jobId}`, 'GET');
+        if (!res.success || !res.job) {
+            showToast('获取任务详情失败', 'danger');
+            return;
+        }
+        const job = res.job;
+        document.getElementById('jobDetailTitle').innerHTML = `<i class="bi bi-file-earmark-medical text-info me-2"></i>审计流水 #${job.id} - ${escapeHtml(job.job_type)} (${escapeHtml(job.timestamp)})`;
+
+        const details = job.details || [];
+        const detailCards = details.map(d => `
+            <div class="card mb-2 border">
+                <div class="card-header bg-light py-1 px-2 d-flex justify-content-between align-items-center small">
+                    <span class="fw-bold"><i class="bi bi-router me-1"></i>${escapeHtml(d.device || 'Device')}</span>
+                    <span class="badge bg-${d.success ? 'success' : 'danger'}">${d.success ? '通道成功' : '执行失败'}</span>
+                </div>
+                <div class="card-body p-2">
+                    <pre class="bg-dark text-light p-2 rounded mb-0 small" style="max-height: 180px; overflow-y: auto; font-size: 0.75rem;">${escapeHtml(d.output || d.error || '无回显')}</pre>
+                </div>
+            </div>
+        `).join('');
+
+        document.getElementById('jobDetailBody').innerHTML = `
+            <div class="mb-2 small">
+                <strong>目标设备：</strong><code>${escapeHtml(job.target_devices)}</code> |
+                <strong>执行摘要：</strong>${escapeHtml(job.summary)}
+            </div>
+            <div class="mb-3">
+                <div class="small fw-bold mb-1">关联下发或生成的 CLI 脚本：</div>
+                <pre class="bg-dark text-info p-2 rounded small mb-0" style="max-height: 180px; overflow-y: auto; font-size: 0.75rem;">${escapeHtml(job.cli_config || '# 无关联 CLI')}</pre>
+            </div>
+            <div>
+                <div class="small fw-bold mb-1">各设备终端执行回显：</div>
+                ${detailCards || '<div class="text-muted small">无设备回显明细</div>'}
+            </div>
+        `;
+        const modal = new bootstrap.Modal(document.getElementById('jobDetailModal'));
+        modal.show();
+    } catch (e) {
+        showToast('加载详情异常: ' + e.message, 'danger');
+    }
+}
+
+async function clearAuditJobs() {
+    if (!confirm('确定要清空所有历史运维审计流水记录吗？')) return;
+    try {
+        const res = await apiCall('/api/jobs/clear', 'DELETE');
+        if (res.success) {
+            showToast('历史审计流水已清空', 'info');
+            loadDashboardData();
+        }
+    } catch (e) {
+        showToast('清空失败: ' + e.message, 'danger');
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadDashboardData();
+});
+</script>
+{% endblock %}
+

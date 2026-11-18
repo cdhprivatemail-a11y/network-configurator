@@ -1,0 +1,1119 @@
+{% extends "base.html" %}
+{% set active_page = 'topology' %}
+{% block title %}智能拓扑大屏与 LLDP 自动发现{% endblock %}
+
+{% block extra_head %}
+<script type="text/javascript" src="https://cdn.bootcdn.net/ajax/libs/vis-network/9.1.9/standalone/umd/vis-network.min.js"></script>
+<style>
+    #liveTopoCanvas, #topoNetworkCanvas {
+        width: 100%;
+        height: 500px;
+        background: radial-gradient(circle at center, #ffffff 0%, #f1f5f9 100%);
+        border-radius: 10px;
+        border: 1px solid #cbd5e1;
+    }
+    .cfg-output-box {
+        background-color: #0f172a;
+        color: #e2e8f0;
+        font-family: Consolas, Monaco, monospace;
+        font-size: 0.82rem;
+        padding: 12px;
+        border-radius: 8px;
+        max-height: 360px;
+        overflow-y: auto;
+        white-space: pre-wrap;
+    }
+    .legend-dot {
+        display: inline-block;
+        width: 12px;
+        height: 12px;
+        border-radius: 3px;
+        margin-right: 4px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- 顶部标题与双模式切换导航 -->
+<div class="d-flex flex-wrap justify-content-between align-items-center mb-3 bg-white p-3 rounded-3 shadow-sm border gap-2">
+    <div>
+        <h5 class="fw-bold mb-1"><i class="bi bi-diagram-3-fill text-primary me-2"></i>智能网络拓扑大屏与 LLDP 拓扑推导中心</h5>
+        <div class="small text-secondary">支持纳管设备实景分层拓扑、LLDP 邻居报文自动解析绘测、节点级直连管控及整网 IP/OSPF 自动推导</div>
+    </div>
+    <ul class="nav nav-pills" id="topoMainTabs" role="tablist">
+        <li class="nav-item" role="presentation">
+            <button class="nav-link active fw-semibold" id="tab-live-topo-btn" data-bs-toggle="pill" data-bs-target="#pane-live-topo" type="button" role="tab">
+                <i class="bi bi-globe2 me-1"></i>实景设备拓扑大屏 (LLDP 发现)
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link fw-semibold" id="tab-plan-topo-btn" data-bs-toggle="pill" data-bs-target="#pane-plan-topo" type="button" role="tab" onclick="setTimeout(() => syncCanvasFromEditor(), 120)">
+                <i class="bi bi-cpu me-1"></i>拓扑驱动 IP 规划与配置推导
+            </button>
+        </li>
+    </ul>
+</div>
+
+<div class="tab-content">
+    <!-- ==================== 模式 1：实景设备拓扑大屏 (LLDP 发现与节点管控) ==================== -->
+    <div class="tab-pane fade show active" id="pane-live-topo" role="tabpanel">
+        <div class="row g-3">
+            <!-- 左侧：交互式实景拓扑画布 -->
+            <div class="col-lg-8">
+                <div class="card border-0 shadow-sm h-100">
+                    <div class="card-header bg-white py-2 px-3 d-flex flex-wrap justify-content-between align-items-center gap-2">
+                        <div class="d-flex align-items-center gap-2">
+                            <span class="fw-bold"><i class="bi bi-bezier2 text-primary me-1"></i>全网实景架构拓扑图</span>
+                            <span class="badge bg-primary-subtle text-primary border" id="liveTopoStatsBadge">加载中...</span>
+                        </div>
+                        <div class="d-flex flex-wrap gap-2">
+                            <div class="btn-group btn-group-sm">
+                                <button class="btn btn-outline-secondary active" id="btnLayoutHier" onclick="setLiveLayoutMode('hierarchical')">
+                                    <i class="bi bi-layers me-1"></i>架构分层视图
+                                </button>
+                                <button class="btn btn-outline-secondary" id="btnLayoutCoords" onclick="setLiveLayoutMode('exact_coords')">
+                                    <i class="bi bi-bounding-box me-1"></i>模拟器原始坐标
+                                </button>
+                                <button class="btn btn-outline-secondary" id="btnLayoutFree" onclick="setLiveLayoutMode('free')">
+                                    <i class="bi bi-arrows-move me-1"></i>力导向视图
+                                </button>
+                            </div>
+                            <button class="btn btn-sm btn-outline-success fw-semibold" id="btnLivePingMesh" onclick="runTopologyPingMesh()">
+                                <i class="bi bi-activity me-1"></i>全网连通性实测 (Ping Mesh)
+                            </button>
+                            <button class="btn btn-sm btn-outline-info fw-semibold" id="btnLiveSaveAll" onclick="saveAllTopologyConfigs()">
+                                <i class="bi bi-floppy me-1"></i>全网配置固化 (Save)
+                            </button>
+                            <button class="btn btn-sm btn-warning text-dark fw-semibold" onclick="openLocalCloneModal()">
+                                <i class="bi bi-lightning-charge-fill me-1"></i>1:1 克隆本地模拟器拓扑
+                            </button>
+                            <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#lldpImportModal">
+                                <i class="bi bi-radar me-1"></i>导入 LLDP 回显
+                            </button>
+                            <button class="btn btn-sm btn-primary" onclick="loadLiveTopology()">
+                                <i class="bi bi-arrow-clockwise me-1"></i>刷新
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body p-2 position-relative">
+                        <div id="liveTopoCanvas"></div>
+                        <div class="d-flex flex-wrap justify-content-between align-items-center mt-2 px-2 small text-secondary">
+                            <div class="d-flex flex-wrap gap-3">
+                                <span><span class="legend-dot" style="background:#dcfce7;border:2px solid #16a34a;"></span>华为 VRP 节点</span>
+                                <span><span class="legend-dot" style="background:#e0f2fe;border:2px solid #0284c7;"></span>华三 Comware 节点</span>
+                                <span><span class="legend-dot" style="background:#fef3c7;border:2px solid #d97706;"></span>LLDP 外部发现节点</span>
+                            </div>
+                            <div><i class="bi bi-hand-index-thumb me-1"></i>点击任意设备节点可在右侧打开「节点实时控制台」</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 右侧：节点实时控制台 (Node Inspector) -->
+            <div class="col-lg-4">
+                <div class="card border-0 shadow-sm h-100">
+                    <div class="card-header bg-white py-2 px-3 d-flex justify-content-between align-items-center">
+                        <h6 class="fw-bold mb-0"><i class="bi bi-sliders text-primary me-2"></i>节点实时管控抽屉 (Node Inspector)</h6>
+                        <span class="badge bg-secondary" id="inspTierBadge">未选中节点</span>
+                    </div>
+                    <div class="card-body p-3 d-flex flex-column justify-content-between" id="nodeInspectorBody">
+                        <div>
+                            <div class="p-3 rounded-3 bg-light border mb-3">
+                                <div class="d-flex justify-content-between align-items-start mb-2">
+                                    <div>
+                                        <h5 class="fw-bold mb-0 text-dark" id="inspNodeName">--</h5>
+                                        <div class="small text-muted font-monospace" id="inspNodeHost">请在左侧拓扑图中点击设备节点</div>
+                                    </div>
+                                    <span class="badge bg-success" id="inspScoreBadge">-- 分</span>
+                                </div>
+                                <div class="d-flex flex-wrap gap-2 small mt-2">
+                                    <span class="badge bg-white text-dark border" id="inspVendorBadge">厂商: --</span>
+                                    <span class="badge bg-white text-dark border" id="inspGroupBadge">分组: --</span>
+                                </div>
+                            </div>
+
+                            <!-- 邻接链路表 -->
+                            <div class="mb-3">
+                                <div class="small fw-bold text-secondary mb-1"><i class="bi bi-link-45deg me-1"></i>直连 LLDP / 骨干邻居接口表</div>
+                                <div class="table-responsive" style="max-height: 165px; overflow-y: auto;">
+                                    <table class="table table-sm table-bordered align-middle mb-0 small">
+                                        <thead class="table-light">
+                                            <tr><th>本端接口</th><th>对端设备</th><th>对端接口</th><th>协议</th></tr>
+                                        </thead>
+                                        <tbody id="inspLinksTableBody">
+                                            <tr><td colspan="4" class="text-center text-muted py-2">点击拓扑节点查看互联接口</td></tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+
+                            <!-- 节点快速 CLI 下发框 -->
+                            <div class="mb-3">
+                                <div class="d-flex justify-content-between align-items-center mb-1">
+                                    <label class="small fw-bold text-secondary"><i class="bi bi-terminal me-1"></i>节点直通车 CLI 下发 (含防呆护栏)</label>
+                                    <button class="btn btn-link btn-sm p-0 text-decoration-none small" onclick="fillQuickNodeCmd()">填入巡检命令</button>
+                                </div>
+                                <textarea class="form-control form-control-sm font-monospace mb-2" id="inspQuickCliInput" rows="3" placeholder="system-view&#10;lldp global enable&#10;return"></textarea>
+                                <button class="btn btn-sm btn-primary w-100" id="btnInspQuickExec" onclick="executeNodeQuickCli()">
+                                    <i class="bi bi-send-check me-1"></i>立即下发至当前节点
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- 底部三大快捷联动动作 -->
+                        <div class="border-top pt-3">
+                            <div class="small text-muted mb-2">节点联动快捷操作：</div>
+                            <div class="row g-2">
+                                <div class="col-6">
+                                    <button class="btn btn-sm btn-outline-success w-100" onclick="jumpToNodeAudit()">
+                                        <i class="bi bi-shield-check me-1"></i>等保合规体检
+                                    </button>
+                                </div>
+                                <div class="col-6">
+                                    <button class="btn btn-sm btn-outline-info w-100" onclick="triggerNodeBackup()">
+                                        <i class="bi bi-cloud-download me-1"></i>提取配置备份
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== 模式 2：拓扑驱动整网 IP 规划与配置自动推导 ==================== -->
+    <div class="tab-pane fade" id="pane-plan-topo" role="tabpanel">
+        <div class="row g-4 mb-4">
+            <div class="col-lg-7">
+                <div class="card border-0 shadow-sm mb-3">
+                    <div class="card-header bg-white border-0 pt-3 d-flex justify-content-between align-items-center">
+                        <h6 class="card-title fw-bold mb-0"><i class="bi bi-bezier2 text-secondary me-2"></i>规划拓扑预览画布</h6>
+                        <div class="d-flex gap-2 align-items-center">
+                            <span class="badge bg-primary-subtle text-primary border" id="topoStatBadge">4 节点 / 4 链路</span>
+                            <button class="btn btn-sm btn-outline-secondary" onclick="loadSampleTopology('ring')">
+                                <i class="bi bi-magic me-1"></i>4节点环网模板
+                            </button>
+                            <button class="btn btn-sm btn-primary" onclick="generateTopologyConfigs()">
+                                <i class="bi bi-cpu me-1"></i>智能推导整网配置
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div id="topoNetworkCanvas" style="height: 320px;"></div>
+                    </div>
+                </div>
+
+                <div class="card border-0 shadow-sm">
+                    <div class="card-header bg-white border-0 pt-3 d-flex flex-wrap justify-content-between align-items-center gap-2">
+                        <h6 class="card-title fw-bold mb-0"><i class="bi bi-code-slash text-secondary me-2"></i>拓扑元数据与参数声明 (JSON)</h6>
+                        <div class="d-flex flex-wrap gap-2">
+                            <div class="btn-group btn-group-sm">
+                                <button class="btn btn-outline-primary" onclick="quickAddNodeToPlanner('router')">
+                                    <i class="bi bi-plus-circle me-1"></i>+ 路由器
+                                </button>
+                                <button class="btn btn-outline-info" onclick="quickAddNodeToPlanner('switch')">
+                                    <i class="bi bi-plus-circle me-1"></i>+ 交换机
+                                </button>
+                                <button class="btn btn-outline-success" onclick="quickAddLinkToPlanner()">
+                                    <i class="bi bi-link-45deg me-1"></i>+ 互联链路
+                                </button>
+                            </div>
+                            <button class="btn btn-sm btn-outline-secondary" onclick="syncCanvasFromEditor()">
+                                <i class="bi bi-arrow-repeat me-1"></i>刷新画布
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <textarea id="topoJsonEditor" class="form-control font-monospace small" rows="10"></textarea>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-lg-5">
+                <div class="card border-0 shadow-sm h-100 d-flex flex-column">
+                    <div class="card-header bg-white border-0 pt-3 d-flex justify-content-between align-items-center">
+                        <h6 class="card-title fw-bold mb-0"><i class="bi bi-file-earmark-code text-secondary me-2"></i>推导生成的整网 CLI 配置</h6>
+                        <button class="btn btn-sm btn-success" id="btnDeployAll" onclick="deployAllConfigs()" disabled>
+                            <i class="bi bi-cloud-upload me-1"></i>一键推送到模拟器
+                        </button>
+                    </div>
+                    <div class="card-body flex-grow-1 d-flex flex-column">
+                        <ul class="nav nav-pills nav-fill mb-3" id="deviceConfigTabs" role="tablist">
+                            <li class="nav-item">
+                                <span class="text-muted small">尚未生成配置，请点击「智能推导整网配置」</span>
+                            </li>
+                        </ul>
+                        <div class="tab-content flex-grow-1" id="deviceConfigTabContent">
+                            <div class="text-center text-muted py-5 my-auto" id="emptyConfigTip">
+                                <i class="bi bi-cpu fs-1 d-block mb-2 text-secondary opacity-50"></i>
+                                点击 <b>“智能推导整网配置”</b> 按钮<br>引擎将根据互联链路自动计算 /30 网段、接口 IP 及 OSPF 宣告
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- LLDP 邻居回显导入解析 Modal -->
+<div class="modal fade" id="lldpImportModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content border-0 shadow">
+            <div class="modal-header bg-dark text-white py-2">
+                <h6 class="modal-title fw-bold"><i class="bi bi-radar text-info me-2"></i>LLDP 邻居回显报文自动解析绘测</h6>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <span class="small text-secondary">支持直接粘贴华为 <code>display lldp neighbor brief</code> 或华三 <code>display lldp neighbor-information list</code> 终端回显：</span>
+                    <button class="btn btn-sm btn-outline-primary" onclick="fillSampleLldpText()">
+                        <i class="bi bi-magic me-1"></i>填入华为/华三混合 LLDP 回显样例
+                    </button>
+                </div>
+                <textarea class="form-control font-monospace small" id="lldpRawInput" rows="10" placeholder="[R1]display lldp neighbor brief&#10;Local Intf       Neighbor Dev             Neighbor Intf             Exptime(s)&#10;GE0/0/1          SW1                      GE0/0/24                  105&#10;GE0/0/2          Dist-SW2                 Ten-GigabitEthernet1/0/1  112"></textarea>
+            </div>
+            <div class="modal-footer bg-light py-2">
+                <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-sm btn-primary" onclick="applyLldpDiscovery()">
+                    <i class="bi bi-diagram-3 me-1"></i>解析并叠加到实景拓扑图
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 本地模拟器拓扑 1:1 扫描与工程克隆 Modal -->
+<div class="modal fade" id="localCloneModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content border-0 shadow-lg">
+            <div class="modal-header bg-dark text-white py-2">
+                <h6 class="modal-title fw-bold"><i class="bi bi-lightning-charge-fill text-warning me-2"></i>本地模拟器拓扑 1:1 扫描与工程克隆中心 (eNSP / HCL)</h6>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <!-- 全局选项：是否自动同步写入 devices.yaml -->
+                <div class="p-2 px-3 rounded bg-warning-subtle border border-warning-subtle mb-3 d-flex justify-content-between align-items-center">
+                    <div class="small text-dark">
+                        <i class="bi bi-info-circle-fill text-warning-emphasis me-1"></i>
+                        克隆成功后将同时还原 <b>1:1 原始节点坐标、物理接口连线</b> 并自动生成 <b>Tab 2 整网 IP/OSPF 推导配置</b>
+                    </div>
+                    <div class="form-check form-switch mb-0">
+                        <input class="form-check-input" type="checkbox" id="chkCloneSyncInventory" checked>
+                        <label class="form-check-label small fw-bold text-dark" for="chkCloneSyncInventory">同步写入设备库</label>
+                    </div>
+                </div>
+
+                <!-- 通道 A：动态扫描本机正在运行的模拟器串口 -->
+                <div class="card border shadow-sm mb-3">
+                    <div class="card-header bg-light py-2 fw-bold small">
+                        <i class="bi bi-broadcast-pin text-primary me-1"></i>通道一：动态扫描本机运行中的模拟器串口 (Raw Console + LLDP + 同网段推导)
+                    </div>
+                    <div class="card-body py-2 px-3">
+                        <div class="row g-2 align-items-center">
+                            <div class="col-md-4">
+                                <div class="input-group input-group-sm">
+                                    <span class="input-group-text">本机地址</span>
+                                    <input type="text" class="form-control font-monospace" id="localScanHost" value="127.0.0.1">
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="input-group input-group-sm">
+                                    <span class="input-group-text">串口范围</span>
+                                    <input type="number" class="form-control font-monospace" id="localScanStartPort" value="30001">
+                                    <span class="input-group-text">~</span>
+                                    <input type="number" class="form-control font-monospace" id="localScanEndPort" value="30010">
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <button class="btn btn-sm btn-primary w-100" id="btnRunActiveScan" onclick="runActiveLocalTopoScan()">
+                                    <i class="bi bi-radar me-1"></i>立即扫描并复刻活动拓扑
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 通道 B：本机磁盘发现的 .topo (eNSP) / .net (HCL) 工程文件直解 -->
+                <div class="card border shadow-sm mb-3">
+                    <div class="card-header bg-light py-2 d-flex justify-content-between align-items-center">
+                        <span class="fw-bold small"><i class="bi bi-folder2-open text-success me-1"></i>通道二：本机磁盘发现的 eNSP (<code>.topo</code>) / HCL (<code>.net</code>) 工程文件 (无需开机)</span>
+                        <span class="badge bg-secondary" id="localFilesCountBadge">扫描中...</span>
+                    </div>
+                    <div class="card-body p-2">
+                        <div class="table-responsive" style="max-height: 195px; overflow-y: auto;">
+                            <table class="table table-sm table-hover align-middle mb-0 small">
+                                <thead class="table-light">
+                                    <tr><th>工程文件名</th><th>模拟器类型</th><th>路径摘要</th><th class="text-end">操作</th></tr>
+                                </thead>
+                                <tbody id="localProjectFilesBody">
+                                    <tr><td colspan="4" class="text-center text-muted py-3">正在搜索本机 .topo / .net 拓扑工程文件...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 通道 C：手动选择任意本地 .topo / .net 工程文件上传解析 -->
+                <div class="card border shadow-sm">
+                    <div class="card-header bg-light py-2 fw-bold small">
+                        <i class="bi bi-upload text-info me-1"></i>通道三：手动上传任意本地 <code>.topo</code> / <code>.net</code> 工程文件
+                    </div>
+                    <div class="card-body py-2 px-3">
+                        <input type="file" class="form-control form-control-sm" id="localTopoFileInput" accept=".topo,.net,.xml,.json" onchange="handleLocalTopoFileUpload(this)">
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer bg-light py-2">
+                <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">关闭</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 全网连通性矩阵测试 (Ping Mesh) 诊断详情模态框 -->
+<div class="modal fade" id="pingMeshModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content border-0 shadow-lg">
+            <div class="modal-header bg-success text-white py-2">
+                <h6 class="modal-title fw-bold"><i class="bi bi-activity me-2"></i>全网连通性矩阵实测诊断报告 (Ping Mesh & OSPF 邻居状态)</h6>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body p-3">
+                <div class="d-flex justify-content-between align-items-center p-3 mb-3 bg-light rounded border">
+                    <div>
+                        <div class="fw-bold fs-5 text-dark" id="pingMeshPassRate">全网连通率: 100%</div>
+                        <div class="small text-muted" id="pingMeshSummarySub">共测试 0 条链路</div>
+                    </div>
+                    <div>
+                        <span class="badge bg-success-subtle text-success border border-success-subtle px-3 py-2 fs-6" id="pingMeshBadge">全部通畅</span>
+                    </div>
+                </div>
+
+                <div class="table-responsive" style="max-height: 320px; overflow-y: auto;">
+                    <table class="table table-sm table-hover align-middle mb-0 small">
+                        <thead class="table-light">
+                            <tr>
+                                <th>源设备 (接口)</th>
+                                <th>目的设备 (对端IP)</th>
+                                <th>子网段</th>
+                                <th>状态 / 时延</th>
+                                <th>OSPF 状态</th>
+                            </tr>
+                        </thead>
+                        <tbody id="pingMeshResultsBody">
+                            <tr><td colspan="5" class="text-center text-muted py-3">暂无测试数据</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-footer bg-light py-2">
+                <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">关闭</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+let liveNetworkInstance = null;
+let liveTopoData = { nodes: [], edges: [] };
+let liveLayoutMode = 'hierarchical';
+let selectedNodeId = null;
+
+let networkInstance = null;
+let currentGeneratedConfigs = {};
+
+const sampleRingTopo = {
+    "nodes": [
+        {"name": "RouterA", "device_type": "hp_comware_telnet", "role": "router", "loopback_ip": "1.1.1.1"},
+        {"name": "RouterB", "device_type": "hp_comware_telnet", "role": "router", "loopback_ip": "2.2.2.2"},
+        {"name": "RouterC", "device_type": "hp_comware_telnet", "role": "router", "loopback_ip": "3.3.3.3"},
+        {"name": "RouterD", "device_type": "hp_comware_telnet", "role": "router", "loopback_ip": "4.4.4.4"}
+    ],
+    "links": [
+        {"src": "RouterA", "src_if": "GigabitEthernet0/0", "dst": "RouterB", "dst_if": "GigabitEthernet0/0", "subnet": "10.0.12.0/30"},
+        {"src": "RouterB", "src_if": "GigabitEthernet0/1", "dst": "RouterC", "dst_if": "GigabitEthernet0/0", "subnet": "10.0.23.0/30"},
+        {"src": "RouterC", "src_if": "GigabitEthernet0/1", "dst": "RouterD", "dst_if": "GigabitEthernet0/0", "subnet": "10.0.34.0/30"},
+        {"src": "RouterD", "src_if": "GigabitEthernet0/1", "dst": "RouterA", "dst_if": "GigabitEthernet0/1", "subnet": "10.0.14.0/30"}
+    ],
+    "global_params": {
+        "interconnect_pool": "10.0.0.0/24",
+        "routing": { "enabled": true, "protocol": "ospf", "process_id": 1, "area": 0 }
+    }
+};
+
+document.addEventListener('DOMContentLoaded', function() {
+    loadSampleTopology('ring');
+    loadLiveTopology();
+});
+
+async function loadLiveTopology(lldpText = '') {
+    try {
+        const res = await apiCall('/api/topology/discover', 'POST', { lldp_text: lldpText });
+        if (res && res.success) {
+            liveTopoData = res;
+            if (res.preserve_coordinates) {
+                setLiveLayoutMode('exact_coords');
+            } else {
+                renderLiveTopologyCanvas();
+            }
+            document.getElementById('liveTopoStatsBadge').textContent =
+                `${res.node_count} 节点 / ${res.edge_count} 链路 (LLDP 发现: ${res.lldp_discovered_count})`;
+            if (res.planner_topology) {
+                const editor = document.getElementById('topoJsonEditor');
+                if (editor) {
+                    editor.value = JSON.stringify(res.planner_topology, null, 2);
+                    renderTopologyCanvas(res.planner_topology);
+                }
+            }
+            if (res.nodes && res.nodes.length > 0) {
+                selectLiveNode(res.nodes[0].id);
+            }
+        }
+    } catch (e) {
+        showToast('加载实景拓扑失败: ' + e.message, 'error');
+    }
+}
+
+function setLiveLayoutMode(mode) {
+    liveLayoutMode = mode;
+    document.getElementById('btnLayoutHier').classList.toggle('active', mode === 'hierarchical');
+    const btnCoords = document.getElementById('btnLayoutCoords');
+    if (btnCoords) btnCoords.classList.toggle('active', mode === 'exact_coords');
+    document.getElementById('btnLayoutFree').classList.toggle('active', mode === 'free');
+    renderLiveTopologyCanvas();
+}
+
+function renderLiveTopologyCanvas() {
+    const container = document.getElementById('liveTopoCanvas');
+    if (typeof vis === 'undefined') {
+        container.innerHTML = '<div class="p-4 text-center text-muted">正在加载拓扑渲染引擎...</div>';
+        return;
+    }
+
+    const uniqueLevels = new Set((liveTopoData.nodes || []).map(n => n.level));
+    const visNodes = (liveTopoData.nodes || []).map((n, idx) => {
+        const isDiscovered = n.group === 'LLDP自动发现';
+        const isHuawei = n.vendor === 'huawei';
+        const bg = isDiscovered ? '#fef3c7' : (isHuawei ? '#dcfce7' : '#e0f2fe');
+        const border = isDiscovered ? '#d97706' : (isHuawei ? '#16a34a' : '#0284c7');
+        const item = {
+            id: n.id,
+            label: `${n.name}\n[${n.tier_label}]\nPort:${n.port} | 合规:${n.score}分`,
+            shape: 'box',
+            margin: 10,
+            borderWidth: 2,
+            color: {
+                background: bg,
+                border: border,
+                highlight: { background: '#fef08a', border: '#ca8a04' }
+            },
+            font: { face: 'Microsoft YaHei, Segoe UI', size: 12, bold: true }
+        };
+        if (liveLayoutMode === 'hierarchical' && uniqueLevels.size > 1) {
+            item.level = n.level;
+        }
+        if (liveLayoutMode === 'exact_coords') {
+            const cols = (liveTopoData.nodes || []).length <= 4 ? 2 : 3;
+            const col = idx % cols;
+            const row = Math.floor(idx / cols);
+            item.x = typeof n.x === 'number' ? n.x : (240 + col * 320 + (row % 2 === 1 ? 40 : 0));
+            item.y = typeof n.y === 'number' ? n.y : (110 + row * 190 + (col % 2 === 1 ? 20 : 0));
+        }
+        return item;
+    });
+
+    const visEdges = (liveTopoData.edges || []).map(e => ({
+        id: e.id,
+        from: e.src,
+        to: e.dst,
+        label: e.label,
+        title: `${e.src} (${e.src_if}) ⇄ ${e.dst} (${e.dst_if}) [${e.protocol}]`,
+        font: { align: 'horizontal', size: 11, color: '#1e293b', background: '#fef9c3', strokeWidth: 3, strokeColor: '#ffffff' },
+        color: { color: (e.protocol || '').includes('LLDP') || (e.protocol || '').includes('1:1') ? '#d97706' : '#2563eb' },
+        dashes: e.type === 'trunk',
+        width: 2.5,
+        smooth: { enabled: true, type: 'curvedCW', roundness: 0.08 }
+    }));
+
+    const options = {
+        layout: liveLayoutMode === 'hierarchical' ? {
+            hierarchical: {
+                enabled: true,
+                direction: 'UD',
+                sortMethod: 'directed',
+                levelSeparation: 145,
+                nodeSpacing: 185
+            }
+        } : {
+            hierarchical: false
+        },
+        physics: (liveLayoutMode === 'hierarchical' || liveLayoutMode === 'exact_coords') ? false : {
+            stabilization: true,
+            barnesHut: { springLength: 160, springConstant: 0.04 }
+        },
+        interaction: { hover: true, zoomView: true, dragNodes: true }
+    };
+
+    if (liveNetworkInstance) {
+        liveNetworkInstance.destroy();
+    }
+    liveNetworkInstance = new vis.Network(container, {
+        nodes: new vis.DataSet(visNodes),
+        edges: new vis.DataSet(visEdges)
+    }, options);
+
+    liveNetworkInstance.on('click', function(params) {
+        if (params.nodes && params.nodes.length > 0) {
+            selectLiveNode(params.nodes[0]);
+        }
+    });
+}
+
+async function openLocalCloneModal() {
+    const modal = new bootstrap.Modal(document.getElementById('localCloneModal'));
+    modal.show();
+    try {
+        const res = await apiCall('/api/topology/local-files', 'GET');
+        const files = (res && res.files) ? res.files : [];
+        document.getElementById('localFilesCountBadge').textContent = `共发现 ${files.length} 份工程`;
+        const tbody = document.getElementById('localProjectFilesBody');
+        if (files.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-3">未发现本地工程文件，可通过下方手动上传</td></tr>';
+            return;
+        }
+        tbody.innerHTML = files.map((f, idx) => `
+            <tr>
+                <td class="fw-bold text-dark"><i class="bi bi-file-earmark-code text-primary me-1"></i>${escapeHtml(f.filename)}</td>
+                <td><span class="badge ${f.filename.endsWith('.topo') ? 'bg-success-subtle text-success' : 'bg-info-subtle text-info'} border">${escapeHtml(f.simulator_type)}</span></td>
+                <td class="text-muted font-monospace" style="font-size:0.72rem; max-width:240px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(f.filepath)}">${escapeHtml(f.filepath)}</td>
+                <td class="text-end">
+                    <button class="btn btn-sm btn-warning text-dark fw-semibold py-0 px-2" data-filepath="${escapeHtml(f.filepath)}" onclick="cloneLocalProjectFile(this.getAttribute('data-filepath'))">
+                        <i class="bi bi-lightning-fill me-1"></i>1:1 克隆此拓扑
+                    </button>
+                </td>
+            </tr>
+        `).join('');
+    } catch (e) {
+        showToast('扫描本地工程文件失败: ' + e.message, 'error');
+    }
+}
+
+async function cloneLocalProjectFile(filepath) {
+    const syncInv = document.getElementById('chkCloneSyncInventory').checked;
+    try {
+        const res = await apiCall('/api/topology/clone-file', 'POST', {
+            filepath: filepath,
+            sync_inventory: syncInv
+        });
+        if (res && res.success) {
+            applyClonedTopologyResult(res);
+        } else {
+            showToast(res.error || '克隆工程文件失败', 'error');
+        }
+    } catch (e) {
+        showToast('克隆异常: ' + e.message, 'error');
+    }
+}
+
+function handleLocalTopoFileUpload(input) {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    const syncInv = document.getElementById('chkCloneSyncInventory').checked;
+    const reader = new FileReader();
+    reader.onload = async function(evt) {
+        try {
+            const res = await apiCall('/api/topology/clone-file', 'POST', {
+                filename: file.name,
+                content: evt.target.result,
+                sync_inventory: syncInv
+            });
+            if (res && res.success) {
+                applyClonedTopologyResult(res);
+            }
+        } catch (e) {
+            showToast('解析上传拓扑文件失败: ' + e.message, 'error');
+        }
+    };
+    reader.readAsText(file, 'utf-8');
+    input.value = '';
+}
+
+async function runActiveLocalTopoScan() {
+    const host = document.getElementById('localScanHost').value.trim() || '127.0.0.1';
+    const startPort = parseInt(document.getElementById('localScanStartPort').value) || 2000;
+    const endPort = parseInt(document.getElementById('localScanEndPort').value) || 2020;
+    const syncInv = document.getElementById('chkCloneSyncInventory').checked;
+    const btn = document.getElementById('btnRunActiveScan');
+    btn.disabled = true;
+    btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>正在扫描 ${host}:${startPort}-${endPort}...`;
+    try {
+        const res = await apiCall('/api/topology/scan-local', 'POST', {
+            host: host,
+            start_port: startPort,
+            end_port: endPort,
+            sync_inventory: syncInv
+        });
+        if (res && res.success) {
+            applyClonedTopologyResult(res);
+        } else {
+            showToast(res.error || '未扫描到活动拓扑', 'warning');
+        }
+    } catch (e) {
+        showToast('扫描异常: ' + e.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = `<i class="bi bi-radar me-1"></i>立即扫描并复刻活动拓扑`;
+    }
+}
+
+function applyClonedTopologyResult(res) {
+    const modalEl = document.getElementById('localCloneModal');
+    const modal = bootstrap.Modal.getInstance(modalEl);
+    if (modal) modal.hide();
+
+    liveTopoData = res;
+    setLiveLayoutMode('exact_coords');
+    document.getElementById('liveTopoStatsBadge').textContent =
+        `[1:1 克隆: ${res.source_label}] ${res.node_count} 节点 / ${res.edge_count} 条物理连线`;
+
+    if (res.nodes && res.nodes.length > 0) {
+        selectLiveNode(res.nodes[0].id);
+    }
+
+    // 同步填充 Tab 2 (拓扑驱动 IP 规划与配置推导)
+    if (res.planner_topology) {
+        const editor = document.getElementById('topoJsonEditor');
+        if (editor) {
+            editor.value = JSON.stringify(res.planner_topology, null, 2);
+            renderTopologyCanvas(res.planner_topology);
+        }
+    }
+
+    const syncMsg = res.synced_inventory_count ? `，已同步 ${res.synced_inventory_count} 台设备至设备库` : '';
+    showToast(`⚡ 1:1 拓扑克隆成功（${res.node_count} 节点 / ${res.edge_count} 链路${syncMsg}）！已同步生成 Tab 2 推导模型`, 'success');
+}
+
+function selectLiveNode(nodeId) {
+    selectedNodeId = nodeId;
+    const node = (liveTopoData.nodes || []).find(n => n.id === nodeId);
+    if (!node) return;
+
+    document.getElementById('inspNodeName').textContent = node.name;
+    document.getElementById('inspNodeHost').textContent = `${node.host}:${node.port} (${node.device_type})`;
+    document.getElementById('inspTierBadge').textContent = node.tier_label;
+    document.getElementById('inspVendorBadge').textContent = `架构: ${node.vendor_label}`;
+    document.getElementById('inspGroupBadge').textContent = `分组: ${node.group}`;
+
+    const scoreBadge = document.getElementById('inspScoreBadge');
+    scoreBadge.textContent = `${node.score} 分`;
+    scoreBadge.className = `badge bg-${node.score >= 85 ? 'success' : (node.score >= 70 ? 'primary' : 'danger')}`;
+
+    const connectedEdges = (liveTopoData.edges || []).filter(e => e.src === nodeId || e.dst === nodeId);
+    const tbody = document.getElementById('inspLinksTableBody');
+    if (connectedEdges.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-2">暂无直连链路</td></tr>';
+    } else {
+        tbody.innerHTML = connectedEdges.map(e => {
+            const isSrc = e.src === nodeId;
+            const localIf = isSrc ? e.src_if : e.dst_if;
+            const peerDev = isSrc ? e.dst : e.src;
+            const peerIf = isSrc ? e.dst_if : e.src_if;
+            return `<tr>
+                <td class="font-monospace">${escapeHtml(localIf)}</td>
+                <td class="fw-semibold text-primary">${escapeHtml(peerDev)}</td>
+                <td class="font-monospace">${escapeHtml(peerIf)}</td>
+                <td><span class="badge bg-light text-dark border">${escapeHtml(e.protocol)}</span></td>
+            </tr>`;
+        }).join('');
+    }
+}
+
+function fillQuickNodeCmd() {
+    document.getElementById('inspQuickCliInput').value = "system-view\nlldp enable\nreturn";
+}
+
+async function executeNodeQuickCli(forceOverride = false) {
+    if (!selectedNodeId) {
+        showToast('请先在拓扑图上点击选择一个节点', 'warning');
+        return;
+    }
+    const cliText = document.getElementById('inspQuickCliInput').value.trim();
+    if (!cliText) {
+        showToast('请输入要下发的 CLI 命令', 'warning');
+        return;
+    }
+
+    const btn = document.getElementById('btnInspQuickExec');
+    btn.disabled = true;
+    try {
+        const res = await apiCall('/api/configure/execute', 'POST', {
+            device_names: [selectedNodeId],
+            commands: cliText.split('\n').map(s => s.trim()).filter(Boolean),
+            force_override: forceOverride
+        });
+        if (res.guardrail_triggered) {
+            const msg = (res.findings || []).map(f => `[第${f.line_no}行] ${f.command} -> ${f.title}: ${f.reason}`).join('\n');
+            if (confirm(`⚠️ 高危命令防呆防火墙拦截：\n\n${msg}\n\n是否已知晓风险并强制下发？`)) {
+                await executeNodeQuickCli(true);
+            }
+            return;
+        }
+        if (res.success) {
+            showToast(`已向节点 ${selectedNodeId} 执行 CLI 指令（已记录至作业审计中心）`, 'success');
+        } else {
+            showToast(res.error || '执行失败', 'error');
+        }
+    } catch (e) {
+        showToast('下发失败: ' + e.message, 'error');
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+function jumpToNodeAudit() {
+    if (!selectedNodeId) {
+        showToast('请先选择一个设备节点', 'warning');
+        return;
+    }
+    window.location.href = `/audit?device=${encodeURIComponent(selectedNodeId)}`;
+}
+
+async function triggerNodeBackup() {
+    if (!selectedNodeId) {
+        showToast('请先选择一个设备节点', 'warning');
+        return;
+    }
+    try {
+        showToast(`正在为节点 ${selectedNodeId} 提取配置快照...`, 'info');
+        const res = await apiCall('/api/backup/run', 'POST', { device_names: [selectedNodeId] });
+        if (res.success) {
+            showToast(`节点 ${selectedNodeId} 备份请求已完成`, 'success');
+        }
+    } catch (e) {
+        showToast('备份异常: ' + e.message, 'error');
+    }
+}
+
+function fillSampleLldpText() {
+    document.getElementById('lldpRawInput').value = `[R1]display lldp neighbor brief
+Local Intf       Neighbor Dev             Neighbor Intf             Exptime(s)
+GE0/0/1          SW1                      GE0/0/24                  105
+GE0/0/2          H3C-R1                   GigabitEthernet0/0        118
+GE0/0/3          Campus-Firewall-01       GigabitEthernet1/0/1      110
+[H3C-R1]display lldp neighbor-information list
+System Name      Local Interface          Chassis ID                Port ID
+RouterA          GigabitEthernet0/1       00e0-fc09-1101            GigabitEthernet0/0
+Campus-AP-Core   GigabitEthernet0/2       00e0-fc09-2209            GigabitEthernet0/0/1`;
+}
+
+async function applyLldpDiscovery() {
+    const raw = document.getElementById('lldpRawInput').value.trim();
+    if (!raw) {
+        showToast('请先粘贴或填入 LLDP 邻居回显内容', 'warning');
+        return;
+    }
+    const modalEl = document.getElementById('lldpImportModal');
+    const modal = bootstrap.Modal.getInstance(modalEl);
+    if (modal) modal.hide();
+    await loadLiveTopology(raw);
+    showToast('LLDP 邻居报文解析成功，已动态更新全网实景拓扑！', 'success');
+}
+
+// ==================== 模式 2：原有拓扑推导生成函数 ====================
+function loadSampleTopology(type) {
+    const editor = document.getElementById('topoJsonEditor');
+    editor.value = JSON.stringify(sampleRingTopo, null, 2);
+    renderTopologyCanvas(sampleRingTopo);
+}
+
+function syncCanvasFromEditor() {
+    try {
+        const data = JSON.parse(document.getElementById('topoJsonEditor').value);
+        renderTopologyCanvas(data);
+    } catch (e) {
+        showToast('JSON 格式不合法: ' + e.message, 'danger');
+    }
+}
+
+function renderTopologyCanvas(topoData) {
+    const container = document.getElementById('topoNetworkCanvas');
+    if (typeof vis === 'undefined' || !container) return;
+    const nodes = [];
+    const edges = [];
+
+    const nodesList = topoData.nodes || [];
+    const linksList = topoData.links || [];
+
+    nodesList.forEach(n => {
+        const isHuawei = (n.device_type || '').includes('huawei');
+        nodes.push({
+            id: n.name,
+            label: `${n.name}\n(${n.loopback_ip || 'Node'})`,
+            shape: 'box',
+            margin: 10,
+            color: {
+                background: isHuawei ? '#e8f5e9' : '#e1f5fe',
+                border: isHuawei ? '#2e7d32' : '#0288d1'
+            },
+            font: { face: 'Segoe UI, Microsoft YaHei', size: 13, bold: true }
+        });
+    });
+
+    linksList.forEach(l => {
+        edges.push({
+            from: l.src,
+            to: l.dst,
+            label: `${l.src_if} ⇄ ${l.dst_if}\n${l.subnet || ''}`,
+            font: { align: 'horizontal', size: 10, background: '#ffffff' },
+            color: { color: '#64748b' },
+            width: 2
+        });
+    });
+
+    if (networkInstance) {
+        networkInstance.destroy();
+    }
+    networkInstance = new vis.Network(container, {
+        nodes: new vis.DataSet(nodes),
+        edges: new vis.DataSet(edges)
+    }, {
+        physics: { stabilization: true, barnesHut: { springLength: 140, springConstant: 0.04 } },
+        interaction: { hover: true, zoomView: true }
+    });
+
+    document.getElementById('topoStatBadge').textContent = `${nodesList.length} 节点 / ${linksList.length} 链路`;
+}
+
+async function generateTopologyConfigs() {
+    let topoData = null;
+    try {
+        topoData = JSON.parse(document.getElementById('topoJsonEditor').value);
+    } catch (e) {
+        showToast('请先检查拓扑 JSON 语法: ' + e.message, 'danger');
+        return;
+    }
+
+    try {
+        const res = await apiCall('/api/topology/generate', 'POST', topoData);
+        if (res.success) {
+            currentGeneratedConfigs = res.device_configs || {};
+            renderGeneratedConfigs(currentGeneratedConfigs);
+            document.getElementById('btnDeployAll').disabled = Object.keys(currentGeneratedConfigs).length === 0;
+            showToast('全网设备配置推导成功！', 'success');
+        } else {
+            showToast(res.error || '推导失败', 'danger');
+        }
+    } catch (e) {
+        showToast('请求异常: ' + e.message, 'danger');
+    }
+}
+
+function renderGeneratedConfigs(configs) {
+    const tabsContainer = document.getElementById('deviceConfigTabs');
+    const contentContainer = document.getElementById('deviceConfigTabContent');
+
+    tabsContainer.innerHTML = '';
+    contentContainer.innerHTML = '';
+
+    const devNames = Object.keys(configs);
+    devNames.forEach((devName, index) => {
+        const isActive = index === 0;
+        const tabLi = document.createElement('li');
+        tabLi.className = 'nav-item';
+        tabLi.innerHTML = `
+            <button class="nav-link py-1 px-3 ${isActive ? 'active' : ''}"
+                    id="tab-btn-${index}" data-bs-toggle="tab"
+                    data-bs-target="#tab-pane-${index}" type="button" role="tab">
+                ${escapeHtml(devName)}
+            </button>
+        `;
+        tabsContainer.appendChild(tabLi);
+
+        const paneDiv = document.createElement('div');
+        paneDiv.className = `tab-pane fade ${isActive ? 'show active' : ''}`;
+        paneDiv.id = `tab-pane-${index}`;
+        paneDiv.innerHTML = `
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <span class="small text-secondary"><i class="bi bi-terminal me-1"></i>设备: <b>${escapeHtml(devName)}</b> 自动生成脚本</span>
+                <button class="btn btn-sm btn-outline-secondary py-0" onclick="navigator.clipboard.writeText(document.getElementById('code-${index}').innerText); showToast('已复制到剪贴板', 'info');">
+                    <i class="bi bi-clipboard me-1"></i>复制
+                </button>
+            </div>
+            <pre class="cfg-output-box" id="code-${index}">${escapeHtml(configs[devName])}</pre>
+        `;
+        contentContainer.appendChild(paneDiv);
+    });
+}
+
+async function deployAllConfigs() {
+    if (!currentGeneratedConfigs || Object.keys(currentGeneratedConfigs).length === 0) return;
+    if (!confirm('确定将推导出的配置一键下发到模拟器设备中吗？')) return;
+
+    const btn = document.getElementById('btnDeployAll');
+    btn.disabled = true;
+    try {
+        const res = await apiCall('/api/topology/deploy', 'POST', { device_configs: currentGeneratedConfigs });
+        if (res.success) {
+            let succCount = 0;
+            (res.results || []).forEach(r => { if (r.success) succCount++; });
+            showToast(`批量推送完成！成功: ${succCount} / 共 ${res.results.length} 台设备`, 'success');
+        }
+    } catch (e) {
+        showToast('下发异常: ' + e.message, 'danger');
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+// Sprint 5: 全网连通性矩阵自动化实测 (Ping Mesh & OSPF 邻居状态)
+async function runTopologyPingMesh() {
+    const btn = document.getElementById('btnLivePingMesh');
+    showLoading(btn, '正在全网 Ping 测...');
+    try {
+        const res = await apiCall('/api/topology/ping-mesh', 'POST', {});
+        if (!res.success) {
+            showToast(res.error || '连通性测试未启动', 'warning');
+            return;
+        }
+
+        // 1. 更新拓扑图连线流光动画与状态颜色
+        const resultMap = {};
+        (res.link_results || []).forEach(r => {
+            resultMap[r.edge_id] = r;
+        });
+
+        if (liveNetworkInstance && liveTopoData && liveTopoData.edges) {
+            const updatedEdges = liveTopoData.edges.map(e => {
+                const r = resultMap[e.id];
+                const isReachable = r ? r.reachable : true;
+                const rttTag = r && r.reachable ? ` [${r.rtt_ms}ms · OSPF ${r.ospf_state || 'Full'}]` : ' [丢包 100%]';
+                return {
+                    id: e.id,
+                    from: e.src,
+                    to: e.dst,
+                    label: e.label + (r ? rttTag : ''),
+                    font: { align: 'horizontal', size: 11, color: isReachable ? '#14532d' : '#7f1d1d', background: isReachable ? '#dcfce7' : '#fee2e2' },
+                    color: { color: isReachable ? '#16a34a' : '#dc2626' },
+                    width: isReachable ? 3.5 : 2,
+                    dashes: !isReachable
+                };
+            });
+            liveNetworkInstance.setData({
+                nodes: new vis.DataSet(liveNetworkInstance.body.data.nodes.get()),
+                edges: new vis.DataSet(updatedEdges)
+            });
+        }
+
+        // 2. 渲染诊断报告模态框表格
+        document.getElementById('pingMeshPassRate').textContent = `全网连通率: ${res.pass_rate}%`;
+        document.getElementById('pingMeshSummarySub').textContent = `共测试 ${res.total_links} 条互联链路 | 正常: ${res.reachable_links} 条 / 异常: ${res.unreachable_links} 条`;
+        const badge = document.getElementById('pingMeshBadge');
+        badge.textContent = res.pass_rate === 100 ? '全部通畅' : (res.pass_rate >= 80 ? '部分链路丢包' : '存在严重断网');
+        badge.className = `badge ${res.pass_rate === 100 ? 'bg-success-subtle text-success border-success-subtle' : 'bg-danger-subtle text-danger border-danger-subtle'} px-3 py-2 fs-6`;
+
+        const tbody = document.getElementById('pingMeshResultsBody');
+        tbody.innerHTML = (res.link_results || []).map(r => `
+            <tr>
+                <td class="font-monospace"><b>${escapeHtml(r.src)}</b> (${escapeHtml(r.src_if)})</td>
+                <td class="font-monospace"><b>${escapeHtml(r.dst)}</b> (${escapeHtml(r.dst_ip || r.dst_if)})</td>
+                <td><code>${escapeHtml(r.subnet || '-')}</code></td>
+                <td>
+                    <span class="badge ${r.reachable ? 'bg-success' : 'bg-danger'}">
+                        ${escapeHtml(r.status_label)}
+                    </span>
+                </td>
+                <td><span class="badge bg-light text-dark border">${escapeHtml(r.ospf_state || 'N/A')}</span></td>
+            </tr>
+        `).join('');
+
+        const modal = new bootstrap.Modal(document.getElementById('pingMeshModal'));
+        modal.show();
+        showToast(`⚡ 全网连通性实测完成: 连通率 ${res.pass_rate}% (${res.reachable_links}/${res.total_links} 链路正常)`, res.pass_rate >= 80 ? 'success' : 'warning');
+    } catch (e) {
+        showToast('全网连通性实测失败: ' + e.message, 'error');
+    } finally {
+        hideLoading(btn);
+    }
+}
+
+// Sprint 5: 全网配置一键固化保存 (save force / save)
+async function saveAllTopologyConfigs() {
+    const btn = document.getElementById('btnLiveSaveAll');
+    showLoading(btn, '正在固化全网配置...');
+    try {
+        const res = await apiCall('/api/topology/save-all', 'POST', {});
+        if (res.success) {
+            showToast(`💾 全网配置固化成功！已将 ${res.saved_count}/${res.total} 台设备内存配置持久化至 NVRAM/Flash`, 'success');
+        } else {
+            showToast(res.error || '固化失败', 'warning');
+        }
+    } catch (e) {
+        showToast('保存异常: ' + e.message, 'error');
+    } finally {
+        hideLoading(btn);
+    }
+}
+
+// Sprint 5: 可视化快捷节点与链路添加 (无需手写 JSON)
+function quickAddNodeToPlanner(role = 'router') {
+    let data;
+    try {
+        data = JSON.parse(document.getElementById('topoJsonEditor').value);
+    } catch (e) {
+        data = { nodes: [], links: [], global_params: { interconnect_pool: "10.0.0.0/24", routing: { enabled: true, protocol: "ospf", process_id: 1, area: 0 } } };
+    }
+    const idx = (data.nodes || []).length + 1;
+    const defaultName = role === 'switch' ? `SW${idx}` : `Router${idx}`;
+    const name = prompt(`请输入新增${role === 'switch' ? '交换机' : '路由器'}的设备名称:`, defaultName);
+    if (!name) return;
+
+    data.nodes = data.nodes || [];
+    data.nodes.push({
+        name: name.trim(),
+        device_type: "hp_comware_telnet",
+        role: role,
+        loopback_ip: `10.0.0.${idx}`
+    });
+    document.getElementById('topoJsonEditor').value = JSON.stringify(data, null, 2);
+    renderTopologyCanvas(data);
+    showToast(`已添加节点: ${name}`, 'success');
+}
+
+function quickAddLinkToPlanner() {
+    let data;
+    try {
+        data = JSON.parse(document.getElementById('topoJsonEditor').value);
+    } catch (e) {
+        showToast('请先检查 JSON 语法', 'danger');
+        return;
+    }
+    const nodes = (data.nodes || []).map(n => n.name);
+    if (nodes.length < 2) {
+        showToast('拓扑中至少需要 2 个节点才能建立连线', 'warning');
+        return;
+    }
+    const src = prompt(`请输入源设备名称 (可选: ${nodes.join(', ')}):`, nodes[0]);
+    if (!src) return;
+    const dst = prompt(`请输入目的设备名称 (可选: ${nodes.join(', ')}):`, nodes[1]);
+    if (!dst || src === dst) return;
+
+    data.links = data.links || [];
+    const idx = data.links.length + 1;
+    data.links.push({
+        src: src.trim(),
+        src_if: "GigabitEthernet0/0",
+        dst: dst.trim(),
+        dst_if: "GigabitEthernet0/0",
+        subnet: `10.0.${idx}.0/30`,
+        type: "routed"
+    });
+    document.getElementById('topoJsonEditor').value = JSON.stringify(data, null, 2);
+    renderTopologyCanvas(data);
+    showToast(`已建立互联链路: ${src} ⇄ ${dst}`, 'success');
+}
+</script>
+{% endblock %}

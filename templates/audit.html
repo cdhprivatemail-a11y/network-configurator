@@ -1,0 +1,771 @@
+{% extends "base.html" %}
+{% set active_page = 'audit' %}
+{% block title %}设备结构化巡检与等保合规审计{% endblock %}
+
+{% block extra_head %}
+<style>
+.audit-score-box {
+    width: 96px;
+    height: 96px;
+    border-radius: 50%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    border: 6px solid #198754;
+    background: #f8fff9;
+}
+.rule-card {
+    border-left: 4px solid #dee2e6;
+    transition: all 0.15s ease;
+}
+.rule-card.rule-pass {
+    border-left-color: #198754;
+}
+.rule-card.rule-fail {
+    border-left-color: #dc3545;
+    background-color: #fffafa;
+}
+.cli-remediation-box {
+    background-color: #0f172a;
+    color: #38bdf8;
+    font-family: "Consolas", "Monaco", monospace;
+    font-size: 0.8rem;
+    padding: 12px;
+    border-radius: 8px;
+    max-height: 290px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- 顶部操作栏 -->
+<div class="d-flex flex-wrap justify-content-between align-items-center mb-3 bg-white p-3 rounded-3 shadow-sm border gap-2">
+    <div>
+        <h5 class="fw-bold mb-1"><i class="bi bi-shield-check text-primary me-2"></i>结构化协议巡检与等保 2.0 三级合规审计中心</h5>
+        <div class="small text-secondary">对标 Golden Config 黄金基线：自动扫描 10 大核心安全控制点、解析接口/OSPF/BGP/VRRP 状态并生成一键修复脚本</div>
+    </div>
+    <div class="d-flex flex-wrap align-items-center gap-2">
+        <div class="input-group input-group-sm" style="width: 260px;">
+            <span class="input-group-text bg-light"><i class="bi bi-router me-1"></i>纳管设备</span>
+            <select class="form-select" id="inspectDeviceSelect">
+                <option value="">加载设备中...</option>
+            </select>
+            <button class="btn btn-primary" onclick="runDeviceInspection()"><i class="bi bi-play-fill me-1"></i>巡检</button>
+        </div>
+        <div class="input-group input-group-sm" style="width: 270px;">
+            <span class="input-group-text bg-light"><i class="bi bi-archive me-1"></i>备份快照</span>
+            <select class="form-select" id="auditBackupSelect" onchange="runBackupAudit(this.value)">
+                <option value="">-- 选择备份文件审计 --</option>
+            </select>
+        </div>
+        <div class="btn-group btn-group-sm">
+            <button class="btn btn-outline-danger" onclick="loadSampleConfig('vulnerable')" title="加载存在弱口令、明文Telnet、缺少ACL/日志审计的待整改配置">
+                <i class="bi bi-exclamation-octagon me-1"></i>高危样例
+            </button>
+            <button class="btn btn-outline-success" onclick="loadSampleConfig('hardened')" title="加载符合等保2.0三级要求的100分满分黄金配置">
+                <i class="bi bi-award me-1"></i>满分基线样例
+            </button>
+        </div>
+        <button class="btn btn-sm btn-warning text-dark fw-semibold" onclick="runBatchFleetAudit()">
+            <i class="bi bi-trophy-fill me-1"></i>全网批量普查榜
+        </button>
+        <button class="btn btn-sm btn-dark" onclick="exportStandaloneHtmlReport()">
+            <i class="bi bi-file-earmark-richtext me-1"></i>导出 HTML 报告
+        </button>
+    </div>
+</div>
+
+<!-- 顶部 KPI 仪表盘 -->
+<div class="row g-3 mb-3">
+    <div class="col-md-4">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-body d-flex align-items-center gap-3">
+                <div class="audit-score-box" id="scoreCircle">
+                    <span class="fs-3 fw-bold lh-1" id="scoreValue">--</span>
+                    <span class="small text-muted" style="font-size: 0.7rem;">/ 100分</span>
+                </div>
+                <div>
+                    <div class="text-secondary small mb-1">等保 2.0 三级合规评级</div>
+                    <h5 class="fw-bold mb-1" id="gradeBadge"><span class="badge bg-secondary">等待巡检</span></h5>
+                    <div class="small text-muted" id="sourceModeLabel">点击上方「巡检」或选择样例开始评估</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-body d-flex flex-column justify-content-center">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <span class="small text-secondary">黄金基线核查通过率</span>
+                    <span class="fw-bold text-dark" id="passRatioText">0 / 10 项通过</span>
+                </div>
+                <div class="progress mb-2" style="height: 10px;">
+                    <div class="progress-bar bg-success" id="passProgressBar" role="progressbar" style="width: 0%"></div>
+                </div>
+                <div class="d-flex gap-3 small">
+                    <span class="text-success"><i class="bi bi-check-circle-fill me-1"></i>合规项: <b id="passedCount">0</b></span>
+                    <span class="text-danger"><i class="bi bi-x-circle-fill me-1"></i>违规风险项: <b id="failedCount">0</b></span>
+                    <span class="text-primary ms-auto">识别架构: <b id="detectedVendorBadge">--</b></span>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-body d-flex flex-column justify-content-between">
+                <div class="small text-secondary fw-semibold"><i class="bi bi-activity text-primary me-1"></i>结构化协议与运行态摘要</div>
+                <div class="row text-center g-2 my-1">
+                    <div class="col-3">
+                        <div class="bg-light rounded py-1">
+                            <div class="fw-bold text-primary" id="statIfCount">0</div>
+                            <div class="text-muted" style="font-size: 0.7rem;">三层接口</div>
+                        </div>
+                    </div>
+                    <div class="col-3">
+                        <div class="bg-light rounded py-1">
+                            <div class="fw-bold text-success" id="statOspfCount">0</div>
+                            <div class="text-muted" style="font-size: 0.7rem;">OSPF 条目</div>
+                        </div>
+                    </div>
+                    <div class="col-3">
+                        <div class="bg-light rounded py-1">
+                            <div class="fw-bold text-info" id="statBgpCount">0</div>
+                            <div class="text-muted" style="font-size: 0.7rem;">BGP 邻居</div>
+                        </div>
+                    </div>
+                    <div class="col-3">
+                        <div class="bg-light rounded py-1">
+                            <div class="fw-bold text-warning" id="statVrrpCount">0</div>
+                            <div class="text-muted" style="font-size: 0.7rem;">VRRP 备份组</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 主体双栏工作区 -->
+<div class="row g-3">
+    <!-- 左栏：10 项黄金基线合规核查明细 -->
+    <div class="col-lg-6">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-header bg-white py-2 px-3 d-flex justify-content-between align-items-center">
+                <h6 class="fw-bold mb-0"><i class="bi bi-list-check text-primary me-2"></i>等保 2.0 三级与企业安全基线 10 大控制点</h6>
+                <div class="btn-group btn-group-sm">
+                    <button class="btn btn-outline-secondary py-0 px-2 small" onclick="filterAuditRules('all')">全部</button>
+                    <button class="btn btn-outline-danger py-0 px-2 small" onclick="filterAuditRules('fail')">仅看违规</button>
+                    <button class="btn btn-outline-success py-0 px-2 small" onclick="filterAuditRules('pass')">仅看合规</button>
+                </div>
+            </div>
+            <div class="card-body p-3" style="max-height: 640px; overflow-y: auto;" id="rulesContainer">
+                <div class="text-center text-muted py-5">正在初始化合规审计引擎...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 右栏：结构化协议状态表 + 一键合规修复 CLI -->
+    <div class="col-lg-6 d-flex flex-column gap-3">
+        <!-- 右上：结构化协议运行状态面板 -->
+        <div class="card border-0 shadow-sm">
+            <div class="card-header bg-white py-2 px-3">
+                <ul class="nav nav-tabs card-header-tabs small" role="tablist">
+                    <li class="nav-item"><button class="nav-link active py-1 px-2 fw-semibold" data-bs-toggle="tab" data-bs-target="#tabInterfaces" type="button"><i class="bi bi-ethernet me-1"></i>接口表</button></li>
+                    <li class="nav-item"><button class="nav-link py-1 px-2 fw-semibold" data-bs-toggle="tab" data-bs-target="#tabProtocols" type="button"><i class="bi bi-diagram-2 me-1"></i>OSPF / BGP / VRRP</button></li>
+                    <li class="nav-item"><button class="nav-link py-1 px-2 fw-semibold" data-bs-toggle="tab" data-bs-target="#tabRawConfig" type="button"><i class="bi bi-file-earmark-code me-1"></i>自定义/被检配置文本</button></li>
+                </ul>
+            </div>
+            <div class="card-body p-2">
+                <div class="tab-content">
+                    <div class="tab-pane fade show active" id="tabInterfaces" style="max-height: 240px; overflow-y: auto;">
+                        <table class="table table-sm table-hover align-middle mb-0 small">
+                            <thead class="table-light">
+                                <tr><th>接口名称</th><th>IPv4 地址/掩码</th><th>物理状态</th><th>协议状态</th></tr>
+                            </thead>
+                            <tbody id="tableInterfacesBody">
+                                <tr><td colspan="4" class="text-center text-muted py-3">暂无接口数据</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="tab-pane fade" id="tabProtocols" style="max-height: 240px; overflow-y: auto;">
+                        <table class="table table-sm table-hover align-middle mb-0 small">
+                            <thead class="table-light">
+                                <tr><th>协议类型</th><th>区域 / 接口 / 对端</th><th>标识 (Router-ID / AS / VIP)</th><th>状态</th></tr>
+                            </thead>
+                            <tbody id="tableProtocolsBody">
+                                <tr><td colspan="4" class="text-center text-muted py-3">暂无协议状态数据</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="tab-pane fade" id="tabRawConfig">
+                        <textarea class="form-control form-control-sm font-monospace mb-2" id="auditConfigTextarea" rows="7" placeholder="在此粘贴华为 VRP 或华三 Comware 的 display current-configuration 配置文本..."></textarea>
+                        <div class="d-flex justify-content-end">
+                            <button class="btn btn-sm btn-primary" onclick="runCustomTextAudit()"><i class="bi bi-search me-1"></i>立即审计此配置文本</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 右下：一键合规修复 CLI 脚本生成与下发 -->
+        <div class="card border-0 shadow-sm flex-grow-1">
+            <div class="card-header bg-white py-2 px-3 d-flex justify-content-between align-items-center">
+                <h6 class="fw-bold mb-0"><i class="bi bi-wrench-adjustable-circle text-success me-2"></i>一键生成的合规基线整改修复脚本 (Auto-Remediation CLI)</h6>
+                <div class="d-flex gap-2">
+                    <button class="btn btn-sm btn-outline-secondary py-1 px-2" onclick="copyRemediationCli()"><i class="bi bi-clipboard me-1"></i>复制脚本</button>
+                    <button class="btn btn-sm btn-success py-1 px-2" id="btnDeployRemediation" onclick="deployRemediationCli()"><i class="bi bi-cloud-check me-1"></i>一键下发修复到设备</button>
+                </div>
+            </div>
+            <div class="card-body p-2">
+                <pre class="cli-remediation-box mb-0" id="remediationCliBox">所有基线控制点均已合规，无需生成修复脚本。</pre>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 全网批量等保合规普查排行榜 Modal -->
+<div class="modal fade" id="fleetLeaderboardModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content border-0 shadow-lg">
+            <div class="modal-header bg-dark text-white py-2">
+                <h6 class="modal-title fw-bold"><i class="bi bi-trophy-fill text-warning me-2"></i>全网纳管设备等保 2.0 三级合规普查排行榜 (Fleet Compliance Leaderboard)</h6>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row g-3 mb-3 text-center">
+                    <div class="col-md-3">
+                        <div class="p-2 rounded bg-light border">
+                            <div class="small text-secondary">普查设备总数</div>
+                            <div class="fs-4 fw-bold text-dark" id="fleetTotalDevs">0</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="p-2 rounded bg-primary-subtle border border-primary-subtle">
+                            <div class="small text-primary-emphasis">全网平均合规得分</div>
+                            <div class="fs-4 fw-bold text-primary" id="fleetAvgScore">0</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="p-2 rounded bg-success-subtle border border-success-subtle">
+                            <div class="small text-success-emphasis">合规达标设备 (≥75分)</div>
+                            <div class="fs-4 fw-bold text-success" id="fleetCompliantDevs">0</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="p-2 rounded bg-danger-subtle border border-danger-subtle">
+                            <div class="small text-danger-emphasis">高危待整改设备 (&lt;75分)</div>
+                            <div class="fs-4 fw-bold text-danger" id="fleetRiskDevs">0</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0 small">
+                        <thead class="table-light">
+                            <tr>
+                                <th>排名</th>
+                                <th>设备名称</th>
+                                <th>厂商架构</th>
+                                <th>合规得分与进度</th>
+                                <th>评级</th>
+                                <th>通过/总计</th>
+                                <th>典型违规项摘要</th>
+                                <th class="text-end">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="fleetLeaderboardBody"></tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-footer bg-light py-2">
+                <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">关闭窗口</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+let currentAuditData = null;
+
+const SAMPLE_CONFIGS = {
+    vulnerable: `#
+sysname Core-Switch-A
+#
+interface LoopBack0
+ ip address 10.0.0.1 255.255.255.255
+#
+interface GigabitEthernet0/0/1
+ ip address 192.168.10.1 255.255.255.0
+ vrrp vrid 1 virtual-ip 192.168.10.254
+#
+interface GigabitEthernet0/0/2
+ ip address 10.1.12.1 255.255.255.252
+#
+ospf 1 router-id 10.0.0.1
+ area 0.0.0.0
+  network 192.168.10.0 0.0.0.255
+  network 10.1.12.0 0.0.0.3
+#
+bgp 65001
+ peer 10.0.0.2 as-number 65001
+#
+telnet server enable
+snmp-agent
+snmp-agent community read public
+#
+user-interface vty 0 4
+ authentication-mode none
+#
+return`,
+    hardened: `#
+sysname Hardened-Core-R1
+header login information %WARNING: Authorized Access Only! All activities are monitored.%
+#
+stp mode rstp
+stp enable
+#
+info-center enable
+info-center loghost 192.168.100.200
+ntp-service unicast-server 192.168.100.100
+#
+snmp-agent
+snmp-agent sys-info version v2c v3
+snmp-agent community read cipher Snmp@RO2026
+#
+cpu-defend policy SEC_COPP
+ car packet-type arp cir 64
+quit
+cpu-defend-policy SEC_COPP global
+#
+acl number 2000
+ rule 5 permit source 192.168.100.0 0.0.0.255
+quit
+#
+aaa
+ local-user admin password irreversible-cipher Admin@Sec123
+ local-user admin privilege level 15
+ local-user admin service-type ssh terminal
+quit
+#
+stelnet server enable
+user-interface vty 0 4
+ authentication-mode aaa
+ protocol inbound ssh
+ acl 2000 inbound
+ idle-timeout 5 0
+quit
+#
+interface LoopBack0
+ ip address 1.1.1.1 255.255.255.255
+#
+interface GigabitEthernet0/0/0
+ ip address 192.168.100.1 255.255.255.0
+ vrrp vrid 1 virtual-ip 192.168.100.254
+#
+ospf 1 router-id 1.1.1.1
+ area 0.0.0.0
+  network 192.168.100.0 0.0.0.255
+#
+bgp 65001
+ peer 2.2.2.2 as-number 65001
+#
+return`
+};
+
+document.addEventListener('DOMContentLoaded', async function() {
+    await loadDevicesAndBackups();
+    const params = new URLSearchParams(window.location.search);
+    const targetDev = params.get('device');
+    if (targetDev) {
+        const devSel = document.getElementById('inspectDeviceSelect');
+        if (devSel) devSel.value = targetDev;
+        await runDeviceInspection();
+    } else {
+        loadSampleConfig('vulnerable');
+    }
+});
+
+async function loadDevicesAndBackups() {
+    try {
+        const devRes = await apiCall('/api/devices', 'GET');
+        const devSel = document.getElementById('inspectDeviceSelect');
+        if (devRes.success && devSel) {
+            devSel.innerHTML = '';
+            (devRes.devices || []).forEach(d => {
+                const opt = document.createElement('option');
+                opt.value = d.name;
+                opt.textContent = `${d.name} (${d.host})`;
+                devSel.appendChild(opt);
+            });
+        }
+        const bkRes = await apiCall('/api/backup/list', 'GET');
+        const bkSel = document.getElementById('auditBackupSelect');
+        if (bkRes.success && bkSel) {
+            (bkRes.backups || []).forEach(b => {
+                const opt = document.createElement('option');
+                opt.value = b.filename;
+                opt.textContent = `${b.filename}`;
+                bkSel.appendChild(opt);
+            });
+        }
+    } catch (e) {
+        console.error('加载设备与备份列表失败', e);
+    }
+}
+
+async function runDeviceInspection() {
+    const devName = document.getElementById('inspectDeviceSelect').value;
+    if (!devName) {
+        showToast('请先选择一台目标设备', 'warning');
+        return;
+    }
+    try {
+        const res = await apiCall('/api/audit/inspect-device', 'POST', { device_name: devName });
+        if (res.success) {
+            if (res.config_preview) {
+                document.getElementById('auditConfigTextarea').value = res.config_preview;
+            }
+            renderAuditResult(res);
+            showToast(`已完成设备 ${devName} 巡检与等保合规评估 (得分: ${res.score} 分)`, 'info');
+        } else {
+            showToast(res.error || '巡检失败', 'danger');
+        }
+    } catch (e) {
+        showToast('巡检异常: ' + e.message, 'danger');
+    }
+}
+
+async function runBackupAudit(filename) {
+    if (!filename) return;
+    try {
+        const res = await apiCall('/api/audit/evaluate', 'POST', { backup_filename: filename });
+        if (res.success) {
+            renderAuditResult(res);
+            showToast(`已完成备份快照 ${filename} 合规审计 (得分: ${res.score} 分)`, 'info');
+        } else {
+            showToast(res.error || '备份审计失败', 'danger');
+        }
+    } catch (e) {
+        showToast('审计异常: ' + e.message, 'danger');
+    }
+}
+
+function loadSampleConfig(type) {
+    const cfg = SAMPLE_CONFIGS[type] || SAMPLE_CONFIGS.vulnerable;
+    document.getElementById('auditConfigTextarea').value = cfg;
+    runCustomTextAudit();
+}
+
+async function runCustomTextAudit() {
+    const cfg = document.getElementById('auditConfigTextarea').value;
+    if (!cfg.trim()) {
+        showToast('请先输入或加载配置文本', 'warning');
+        return;
+    }
+    try {
+        const res = await apiCall('/api/audit/evaluate', 'POST', { config_text: cfg });
+        if (res.success) {
+            renderAuditResult(res);
+        }
+    } catch (e) {
+        showToast('配置审计异常: ' + e.message, 'danger');
+    }
+}
+
+function renderAuditResult(res) {
+    currentAuditData = res;
+    const scoreEl = document.getElementById('scoreValue');
+    const circleEl = document.getElementById('scoreCircle');
+    scoreEl.textContent = res.score;
+
+    const colorMap = {
+        success: '#198754',
+        primary: '#0d6efd',
+        warning: '#fd7e14',
+        danger: '#dc3545'
+    };
+    circleEl.style.borderColor = colorMap[res.grade_color] || '#6c757d';
+    document.getElementById('gradeBadge').innerHTML = `<span class="badge bg-${res.grade_color}">${escapeHtml(res.grade)}</span>`;
+    document.getElementById('sourceModeLabel').textContent = res.source_mode || '配置基线评估';
+
+    document.getElementById('passRatioText').textContent = `${res.passed_count} / ${res.total_rules} 项通过`;
+    document.getElementById('passProgressBar').style.width = `${res.score}%`;
+    document.getElementById('passedCount').textContent = res.passed_count;
+    document.getElementById('failedCount').textContent = res.failed_count;
+    document.getElementById('detectedVendorBadge').textContent = res.vendor === 'huawei' ? '华为 VRP' : '华三 Comware';
+
+    renderRulesList(res.rules || [], 'all');
+    renderOperationalTables(res.operational_state || {});
+
+    const remBox = document.getElementById('remediationCliBox');
+    if (res.combined_remediation_cli) {
+        remBox.textContent = res.combined_remediation_cli;
+    } else {
+        remBox.textContent = '# 恭喜！当前设备配置已 100% 满足等保 2.0 三级与企业黄金基线要求，无需整改。';
+    }
+}
+
+function filterAuditRules(filterType) {
+    if (!currentAuditData) return;
+    renderRulesList(currentAuditData.rules || [], filterType);
+}
+
+function renderRulesList(rules, filterType) {
+    const container = document.getElementById('rulesContainer');
+    container.innerHTML = '';
+    const filtered = rules.filter(r => {
+        if (filterType === 'pass') return r.passed;
+        if (filterType === 'fail') return !r.passed;
+        return true;
+    });
+
+    if (filtered.length === 0) {
+        container.innerHTML = '<div class="text-center text-muted py-4">没有匹配的审计规则条目</div>';
+        return;
+    }
+
+    filtered.forEach(r => {
+        const sevColor = r.severity === '高危' ? 'danger' : (r.severity === '中危' ? 'warning text-dark' : 'secondary');
+        const statusBadge = r.passed
+            ? '<span class="badge bg-success"><i class="bi bi-check-lg me-1"></i>合规通过</span>'
+            : '<span class="badge bg-danger"><i class="bi bi-exclamation-triangle me-1"></i>违反基线</span>';
+
+        const remBlock = !r.passed
+            ? `<div class="mt-2 pt-2 border-top"><div class="small text-danger fw-semibold mb-1"><i class="bi bi-tools me-1"></i>建议整改 CLI：</div><pre class="bg-dark text-info p-2 rounded mb-0 small" style="font-size:0.75rem;">${escapeHtml(r.remediation_cli)}</pre></div>`
+            : '';
+
+        const card = document.createElement('div');
+        card.className = `card shadow-sm mb-2 rule-card ${r.passed ? 'rule-pass' : 'rule-fail'}`;
+        card.innerHTML = `
+            <div class="card-body p-2 px-3">
+                <div class="d-flex justify-content-between align-items-center mb-1">
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="badge bg-dark">${r.id}</span>
+                        <span class="badge bg-${sevColor}">${r.severity} (${r.weight}分)</span>
+                        <span class="fw-bold text-dark small">${escapeHtml(r.title)}</span>
+                    </div>
+                    ${statusBadge}
+                </div>
+                <div class="small text-secondary">${escapeHtml(r.desc)}</div>
+                ${remBlock}
+            </div>
+        `;
+        container.appendChild(card);
+    });
+}
+
+function renderOperationalTables(op) {
+    const ifs = op.interfaces || [];
+    const ospf = op.ospf_peers || [];
+    const bgp = op.bgp_peers || [];
+    const vrrp = op.vrrp_groups || [];
+
+    document.getElementById('statIfCount').textContent = ifs.length;
+    document.getElementById('statOspfCount').textContent = ospf.length;
+    document.getElementById('statBgpCount').textContent = bgp.length;
+    document.getElementById('statVrrpCount').textContent = vrrp.length;
+
+    const ifBody = document.getElementById('tableInterfacesBody');
+    if (ifs.length === 0) {
+        ifBody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-3">未检测到三层接口配置或状态</td></tr>';
+    } else {
+        ifBody.innerHTML = ifs.map(i => `
+            <tr>
+                <td class="fw-semibold">${escapeHtml(i.interface)}</td>
+                <td><code>${escapeHtml(i.ip)}</code></td>
+                <td><span class="badge bg-success-subtle text-success border border-success-subtle">${escapeHtml(i.physical)}</span></td>
+                <td><span class="badge bg-primary-subtle text-primary border border-primary-subtle">${escapeHtml(i.protocol)}</span></td>
+            </tr>
+        `).join('');
+    }
+
+    const protoBody = document.getElementById('tableProtocolsBody');
+    const rows = [];
+    ospf.forEach(o => {
+        rows.push(`<tr><td><span class="badge bg-success">OSPF</span></td><td>${escapeHtml(o.area)} / ${escapeHtml(o.interface)}</td><td><code>${escapeHtml(o.neighbor_id)}</code></td><td><span class="badge bg-success-subtle text-success">${escapeHtml(o.state)}</span></td></tr>`);
+    });
+    bgp.forEach(b => {
+        rows.push(`<tr><td><span class="badge bg-info text-dark">BGP</span></td><td>Peer ${escapeHtml(b.peer_ip)}</td><td>AS <code>${escapeHtml(b.as_number)}</code></td><td><span class="badge bg-info-subtle text-info">${escapeHtml(b.state)}</span></td></tr>`);
+    });
+    vrrp.forEach(v => {
+        rows.push(`<tr><td><span class="badge bg-warning text-dark">VRRP</span></td><td>${escapeHtml(v.interface)} (VRID ${escapeHtml(v.vrid)})</td><td>VIP <code>${escapeHtml(v.virtual_ip)}</code></td><td><span class="badge bg-warning-subtle text-dark">${escapeHtml(v.role)}</span></td></tr>`);
+    });
+    protoBody.innerHTML = rows.length ? rows.join('') : '<tr><td colspan="4" class="text-center text-muted py-3">未检测到 OSPF / BGP / VRRP 协议实例</td></tr>';
+}
+
+function copyRemediationCli() {
+    if (!currentAuditData || !currentAuditData.combined_remediation_cli) {
+        showToast('当前已全部合规，无需修复脚本', 'info');
+        return;
+    }
+    navigator.clipboard.writeText(currentAuditData.combined_remediation_cli);
+    showToast('一键合规修复 CLI 脚本已复制到剪贴板', 'success');
+}
+
+async function deployRemediationCli() {
+    if (!currentAuditData || !currentAuditData.combined_remediation_cli) {
+        showToast('当前已 100% 合规，无需下发修复脚本', 'info');
+        return;
+    }
+    const devName = document.getElementById('inspectDeviceSelect').value;
+    if (!devName) {
+        showToast('请先在顶部选择目标纳管设备', 'warning');
+        return;
+    }
+    if (!confirm(`确定将等保合规修复脚本一键下发到设备 [ ${devName} ] 吗？`)) return;
+
+    const btn = document.getElementById('btnDeployRemediation');
+    btn.disabled = true;
+    btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>修复下发中...`;
+    try {
+        const res = await apiCall('/api/features/deploy', 'POST', {
+            device_names: [devName],
+            cli_config: currentAuditData.combined_remediation_cli,
+            pre_backup: true
+        });
+        if (res.success) {
+            showToast(`已向设备 ${devName} 下发合规修复脚本！`, 'success');
+        } else {
+            showToast(res.error || '修复下发失败', 'danger');
+        }
+    } catch (e) {
+        showToast('修复下发异常: ' + e.message, 'danger');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = `<i class="bi bi-cloud-check me-1"></i>一键下发修复到设备`;
+    }
+}
+
+async function runBatchFleetAudit() {
+    try {
+        showToast('正在执行全网纳管设备批量等保三级普查...', 'info');
+        const res = await apiCall('/api/audit/batch-inspect', 'POST', {});
+        if (!res || !res.success) {
+            showToast(res.error || '批量普查失败', 'error');
+            return;
+        }
+        document.getElementById('fleetTotalDevs').textContent = res.total_devices;
+        document.getElementById('fleetAvgScore').textContent = `${res.average_score} 分`;
+        document.getElementById('fleetCompliantDevs').textContent = res.compliant_count;
+        document.getElementById('fleetRiskDevs').textContent = res.risk_count;
+
+        const tbody = document.getElementById('fleetLeaderboardBody');
+        tbody.innerHTML = (res.leaderboard || []).map((item, idx) => {
+            const rankBadge = idx === 0 ? '🥇 #1' : (idx === 1 ? '🥈 #2' : (idx === 2 ? '🥉 #3' : `#${idx + 1}`));
+            const barColor = item.score >= 85 ? 'bg-success' : (item.score >= 70 ? 'bg-primary' : 'bg-danger');
+            const failedTags = (item.failed_summary || []).length > 0
+                ? item.failed_summary.map(t => `<span class="badge bg-danger-subtle text-danger border me-1">${escapeHtml(t)}</span>`).join('')
+                : '<span class="text-success small"><i class="bi bi-check-circle me-1"></i>全部达标</span>';
+            return `<tr>
+                <td class="fw-bold">${rankBadge}</td>
+                <td><div class="fw-bold text-dark">${escapeHtml(item.device_name)}</div><div class="text-muted" style="font-size:0.72rem;">${escapeHtml(item.host)}:${item.port}</div></td>
+                <td><span class="badge bg-light text-dark border">${escapeHtml(item.vendor)}</span></td>
+                <td style="min-width: 150px;">
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="fw-bold">${item.score}分</span>
+                        <div class="progress flex-grow-1" style="height: 7px;">
+                            <div class="progress-bar ${barColor}" style="width: ${item.score}%"></div>
+                        </div>
+                    </div>
+                </td>
+                <td><span class="badge bg-${item.grade_color}">${escapeHtml(item.grade)}</span></td>
+                <td>${item.passed_count} / ${item.total_rules}</td>
+                <td>${failedTags}</td>
+                <td class="text-end">
+                    <button class="btn btn-sm btn-outline-primary py-0 px-2" onclick="inspectFromLeaderboard('${escapeHtml(item.device_name)}')">
+                        查看详情
+                    </button>
+                </td>
+            </tr>`;
+        }).join('');
+
+        const modal = new bootstrap.Modal(document.getElementById('fleetLeaderboardModal'));
+        modal.show();
+        showToast(`全网普查完成！共扫描 ${res.total_devices} 台设备，全网均分 ${res.average_score} 分`, 'success');
+    } catch (e) {
+        showToast('批量普查异常: ' + e.message, 'error');
+    }
+}
+
+async function inspectFromLeaderboard(devName) {
+    const modalEl = document.getElementById('fleetLeaderboardModal');
+    const modal = bootstrap.Modal.getInstance(modalEl);
+    if (modal) modal.hide();
+    const sel = document.getElementById('inspectDeviceSelect');
+    if (sel) sel.value = devName;
+    await runDeviceInspection();
+}
+
+function exportStandaloneHtmlReport() {
+    if (!currentAuditData) {
+        showToast('请先执行一次设备巡检或配置评估后再导出报告', 'warning');
+        return;
+    }
+    const d = currentAuditData;
+    const devTitle = d.device_name || 'Custom-Config';
+    const nowStr = new Date().toLocaleString('zh-CN');
+    const rulesRows = (d.rules || []).map(r => `
+        <tr>
+            <td><b>${escapeHtml(r.id)}</b></td>
+            <td>${escapeHtml(r.category)}</td>
+            <td>${escapeHtml(r.title)}</td>
+            <td>${escapeHtml(r.severity)} (${r.weight}分)</td>
+            <td style="color:${r.passed ? '#16a34a' : '#dc2626'};font-weight:bold;">${r.passed ? '✔ 合规通过' : '✘ 违反基线'}</td>
+            <td><code>${escapeHtml(r.passed ? '-' : r.remediation_cli)}</code></td>
+        </tr>
+    `).join('');
+
+    const reportHtml = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>等保 2.0 三级合规与运行态巡检评估报告 - ${escapeHtml(devTitle)}</title>
+<style>
+body { font-family: "Microsoft YaHei", sans-serif; background: #f8fafc; color: #1e293b; padding: 32px; }
+.container { max-width: 1080px; margin: 0 auto; background: #fff; padding: 32px; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.06); }
+h1 { margin-top: 0; color: #0f172a; border-bottom: 2px solid #e2e8f0; padding-bottom: 12px; }
+.summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin: 20px 0; }
+.kpi-box { background: #f1f5f9; padding: 16px; border-radius: 8px; text-align: center; }
+.kpi-val { font-size: 24px; font-weight: bold; color: #2563eb; }
+table { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 13px; }
+th, td { border: 1px solid #cbd5e1; padding: 10px; text-align: left; vertical-align: top; }
+th { background: #f1f5f9; }
+pre { background: #0f172a; color: #38bdf8; padding: 16px; border-radius: 8px; overflow-x: auto; font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="container">
+    <h1>🛡️ 网络设备等保 2.0 三级合规与协议巡检评估报告</h1>
+    <p><b>评估对象：</b>${escapeHtml(devTitle)} &nbsp;|&nbsp; <b>配置来源：</b>${escapeHtml(d.source_mode || '离线评估')} &nbsp;|&nbsp; <b>识别厂商：</b>${d.vendor === 'huawei' ? '华为 VRP' : '华三 Comware'} &nbsp;|&nbsp; <b>生成时间：</b>${nowStr}</p>
+    <div class="summary-grid">
+        <div class="kpi-box"><div>综合合规得分</div><div class="kpi-val">${d.score} / 100</div></div>
+        <div class="kpi-box"><div>安全合规评级</div><div class="kpi-val">${escapeHtml(d.grade)}</div></div>
+        <div class="kpi-box"><div>通过控制点</div><div class="kpi-val" style="color:#16a34a;">${d.passed_count} 项</div></div>
+        <div class="kpi-box"><div>待整改风险项</div><div class="kpi-val" style="color:#dc2626;">${d.failed_count} 项</div></div>
+    </div>
+    <h3>一、等保 2.0 三级 10 大黄金基线控制点核查明细</h3>
+    <table>
+        <thead><tr><th>规则ID</th><th>安全域</th><th>控制点名称</th><th>权重</th><th>审计结论</th><th>整改建议 CLI</th></tr></thead>
+        <tbody>${rulesRows}</tbody>
+    </table>
+    <h3>二、自动生成的全量合规整改 CLI 脚本</h3>
+    <pre>${escapeHtml(d.combined_remediation_cli || '# 所有控制点均已合规，无需整改。')}</pre>
+</div>
+</body>
+</html>`;
+
+    const blob = new Blob([reportHtml], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Audit_Report_${devTitle}_${new Date().toISOString().slice(0,10)}.html`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('独立 HTML 合规巡检评估报告已导出下载！', 'success');
+}
+</script>
+{% endblock %}

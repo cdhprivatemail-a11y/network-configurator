@@ -1,0 +1,10 @@
+system-view
+ospf {{ process_id | default(1) }} router-id {{ router_id }}
+{% for area in areas %}
+ area {{ area.id }}
+{% for network in area.networks %}
+  network {{ network.address }} {{ network.wildcard }}
+{% endfor %}
+{% endfor %}
+quit
+return

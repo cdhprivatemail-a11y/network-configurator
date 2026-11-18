@@ -59,6 +59,11 @@ async function apiCall(url, method = 'GET', data = null) {
         }
     };
 
+    const token = localStorage.getItem('auth_token');
+    if (token) {
+        options.headers['Authorization'] = 'Bearer ' + token;
+    }
+
     if (data !== null && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method.toUpperCase())) {
         if (typeof data === 'string') {
             options.headers['Content-Type'] = 'text/plain;charset=UTF-8';
@@ -80,6 +85,11 @@ async function apiCall(url, method = 'GET', data = null) {
         }
 
         if (!response.ok) {
+            if (response.status === 401 && !url.includes('/api/auth/login')) {
+                localStorage.removeItem('auth_token');
+                window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname);
+                return;
+            }
             const errorMsg = (typeof result === 'object' && result !== null && (result.detail || result.error || result.message))
                 ? (result.detail || result.error || result.message)
                 : `请求失败: HTTP ${response.status} ${response.statusText}`;
@@ -91,6 +101,26 @@ async function apiCall(url, method = 'GET', data = null) {
         console.error(`API 请求异常 [${method} ${url}]:`, err);
         throw err;
     }
+}
+
+// 身份快捷切换与注销
+async function quickSwitchUser(username, password) {
+    try {
+        const res = await apiCall('/api/auth/login', 'POST', { username, password });
+        if (res.token) localStorage.setItem('auth_token', res.token);
+        showToast(`已切换身份为: ${res.user.display_name} (${res.user.role})`, 'success');
+        setTimeout(() => window.location.reload(), 500);
+    } catch (e) {
+        showToast('切换失败: ' + e.message, 'error');
+    }
+}
+
+async function userLogout() {
+    try {
+        await apiCall('/api/auth/logout', 'POST');
+    } catch (e) {}
+    localStorage.removeItem('auth_token');
+    window.location.href = '/login';
 }
 
 // 3. 确认对话框

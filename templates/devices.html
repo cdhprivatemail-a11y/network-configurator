@@ -351,7 +351,8 @@ function openEditDeviceModal(name) {
     document.getElementById('devPort').value = dev.port || 22;
     document.getElementById('devType').value = dev.device_type || 'huawei_vrp';
     document.getElementById('devUsername').value = dev.username || '';
-    document.getElementById('devPassword').value = dev.password || '';
+    document.getElementById('devPassword').value = '';
+    document.getElementById('devPassword').placeholder = '●●●●●● (已安全托管，留空则保持原密码)';
     document.getElementById('devGroup').value = dev.group || '';
     document.getElementById('devDescription').value = dev.description || '';
 

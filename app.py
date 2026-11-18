@@ -8,11 +8,10 @@ import os
 import logging
 from typing import Dict, List, Any
 import yaml
-from flask import Flask, request, jsonify, render_template, send_from_directory
+from flask import Flask, request, jsonify, render_template, send_from_directory, session, redirect, url_for, g
 
 from utils.device_manager import DeviceManager
 from utils.config_generator import ConfigGenerator
-import base64
 import threading
 from utils.backup_manager import BackupManager
 from utils.device_scanner import DeviceScanner
@@ -21,6 +20,9 @@ from utils.feature_engine import FeatureConfigEngine
 from utils.audit_engine import AuditAndInspectorEngine
 from utils.job_logger import JobAuditLogger
 from utils.risk_guard import CLIRiskGuardrail
+from utils.vault import encrypt_secret, decrypt_secret, mask_device, mask_device_list
+from utils.auth import AuthManager, login_required, roles_accepted, get_current_user
+from utils.change_manager import ChangeManager
 
 # 基础目录配置
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -41,6 +43,7 @@ logging.basicConfig(
 logger = logging.getLogger("App")
 
 app = Flask(__name__)
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", "NetConfigSessionSecret#2026!Key")
 
 # 初始化业务管理器
 device_manager = DeviceManager(max_workers=10)
@@ -52,33 +55,27 @@ feature_engine = FeatureConfigEngine()
 audit_engine = AuditAndInspectorEngine()
 job_logger = JobAuditLogger(db_path=AUDIT_DB_FILE)
 risk_guard = CLIRiskGuardrail()
+auth_manager = AuthManager(AUDIT_DB_FILE)
+change_manager = ChangeManager(AUDIT_DB_FILE, backup_manager, device_manager)
 
-# devices.yaml 线程安全读写锁与凭据保护密钥 (支持环境变量动态覆盖，增强生产安全性)
+# devices.yaml 线程安全读写锁
 _devices_lock = threading.RLock()
-_VAULT_KEY_STR = os.environ.get("NETWORK_CONFIG_VAULT_KEY", "NetConfig@VaultKey2026")
-_VAULT_KEY = _VAULT_KEY_STR.encode("utf-8")
 
 
-def _encrypt_secret(plain: str) -> str:
-    """将明文密码编码为静态加密 Vault 格式 (ENC:v1:...) 防止 YAML 明文泄露"""
-    if not plain or plain.startswith("ENC:v1:"):
-        return plain
-    raw = plain.encode("utf-8")
-    xored = bytes(b ^ _VAULT_KEY[i % len(_VAULT_KEY)] for i, b in enumerate(raw))
-    return "ENC:v1:" + base64.urlsafe_b64encode(xored).decode("ascii")
+@app.after_request
+def add_security_headers(response):
+    """生产级安全响应头 (点击劫持防护 / 嗅探防护 / XSS 防护)"""
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Server"] = "NetConfig-Enterprise"
+    return response
 
 
-def _decrypt_secret(val: str) -> str:
-    """从 Vault 格式还原密码供 Netmiko 连接使用，同时兼容历史明文"""
-    if not val or not isinstance(val, str) or not val.startswith("ENC:v1:"):
-        return val
-    try:
-        enc_b64 = val[7:]
-        xored = base64.urlsafe_b64decode(enc_b64.encode("ascii"))
-        raw = bytes(b ^ _VAULT_KEY[i % len(_VAULT_KEY)] for i, b in enumerate(xored))
-        return raw.decode("utf-8")
-    except Exception:
-        return val
+@app.context_processor
+def inject_auth_context():
+    """向 Jinja2 模板注入当前用户信息上下文"""
+    return {"current_user": get_current_user()}
 
 
 # ==========================================================
@@ -86,7 +83,7 @@ def _decrypt_secret(val: str) -> str:
 # ==========================================================
 
 def load_devices() -> List[Dict[str, Any]]:
-    """从 devices.yaml 线程安全读取设备列表并透明解密连接凭据"""
+    """从 devices.yaml 线程安全读取设备列表并透明解密连接凭据 (供底层驱动连接使用)"""
     with _devices_lock:
         if not os.path.exists(DEVICES_FILE):
             return []
@@ -103,9 +100,9 @@ def load_devices() -> List[Dict[str, Any]]:
                 for dev in raw_list:
                     d_copy = dict(dev)
                     if "password" in d_copy and d_copy["password"]:
-                        d_copy["password"] = _decrypt_secret(str(d_copy["password"]))
+                        d_copy["password"] = decrypt_secret(str(d_copy["password"]))
                     if "secret" in d_copy and d_copy["secret"]:
-                        d_copy["secret"] = _decrypt_secret(str(d_copy["secret"]))
+                        d_copy["secret"] = decrypt_secret(str(d_copy["secret"]))
                     decrypted_list.append(d_copy)
                 return decrypted_list
         except Exception as e:
@@ -114,18 +111,53 @@ def load_devices() -> List[Dict[str, Any]]:
 
 
 def save_devices(devices: List[Dict[str, Any]]) -> bool:
-    """将设备列表线程安全且原子化写入 devices.yaml，并对密码字段执行静态加密存储 (防写入中断导致0字节文件损坏)"""
+    """将设备列表线程安全且原子化写入 devices.yaml，并对密码字段执行 Fernet 强加密存储 (防写入中断导致0字节文件损坏)"""
     with _devices_lock:
         tmp_file = f"{DEVICES_FILE}.tmp.{os.getpid()}"
         try:
+            # 预读取现有已存储的密文映射 (在前端未修改密码或留空时保持原密文不变)
+            existing_ciphers = {}
+            if os.path.exists(DEVICES_FILE):
+                try:
+                    with open(DEVICES_FILE, "r", encoding="utf-8") as f:
+                        raw_data = yaml.safe_load(f)
+                        raw_devs = raw_data.get("devices", []) if isinstance(raw_data, dict) else (raw_data or [])
+                        for d in raw_devs:
+                            if isinstance(d, dict) and d.get("name"):
+                                existing_ciphers[d["name"]] = {
+                                    "password": d.get("password"),
+                                    "secret": d.get("secret")
+                                }
+                except Exception:
+                    pass
+
             vault_devices = []
             for dev in devices:
                 d_copy = dict(dev)
-                if "password" in d_copy and d_copy["password"]:
-                    d_copy["password"] = _encrypt_secret(str(d_copy["password"]))
-                if "secret" in d_copy and d_copy["secret"]:
-                    d_copy["secret"] = _encrypt_secret(str(d_copy["secret"]))
+                dev_name = d_copy.get("name")
+                old_p = existing_ciphers.get(dev_name, {}).get("password") if dev_name else None
+                old_s = existing_ciphers.get(dev_name, {}).get("secret") if dev_name else None
+
+                p = d_copy.get("password")
+                if p and not str(p).startswith("●●●●●●"):
+                    d_copy["password"] = encrypt_secret(str(p))
+                elif old_p:
+                    d_copy["password"] = old_p
+                else:
+                    d_copy.pop("password", None)
+
+                s = d_copy.get("secret")
+                if s and not str(s).startswith("●●●●●●"):
+                    d_copy["secret"] = encrypt_secret(str(s))
+                elif old_s:
+                    d_copy["secret"] = old_s
+                else:
+                    d_copy.pop("secret", None)
+
+                d_copy.pop("has_password", None)
+                d_copy.pop("has_secret", None)
                 vault_devices.append(d_copy)
+
             data = {"devices": vault_devices}
             with open(tmp_file, "w", encoding="utf-8") as f:
                 yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
@@ -144,7 +176,7 @@ def save_devices(devices: List[Dict[str, Any]]) -> bool:
 
 
 def get_device_by_name(name: str) -> Dict[str, Any] | None:
-    """按名称查找设备信息"""
+    """按名称查找设备信息 (内部解密后数据)"""
     devices = load_devices()
     for dev in devices:
         if dev.get("name") == name:
@@ -153,65 +185,140 @@ def get_device_by_name(name: str) -> Dict[str, Any] | None:
 
 
 # ==========================================================
-# 页面路由 (HTML Rendering)
+# 页面路由 (HTML Rendering) - 全部接入 RBAC 访问防护
 # ==========================================================
 
+@app.route("/login")
+def page_login():
+    """系统登录页面"""
+    return render_template("login.html")
+
+
+@app.route("/approvals")
+@login_required
+def page_approvals():
+    """变更审批工单中心"""
+    return render_template("approvals.html", active_page="approvals")
+
+
 @app.route("/")
+@login_required
 def page_dashboard():
     """控制台仪表盘首页"""
-    return render_template("index.html")
+    return render_template("index.html", active_page="dashboard")
 
 
 @app.route("/devices")
+@login_required
 def page_devices():
     """设备管理页面"""
-    return render_template("devices.html")
+    return render_template("devices.html", active_page="devices")
 
 
 @app.route("/configure")
+@login_required
 def page_configure():
     """批量配置管理页面"""
-    return render_template("configure.html")
+    return render_template("configure.html", active_page="configure")
 
 
 @app.route("/templates")
+@login_required
 def page_templates():
     """配置模板管理页面"""
-    return render_template("templates_page.html")
+    return render_template("templates_page.html", active_page="templates")
 
 
 @app.route("/backup")
+@login_required
 def page_backup():
     """配置备份管理页面"""
-    return render_template("backup.html")
+    return render_template("backup.html", active_page="backup")
 
 
 @app.route("/topology")
+@login_required
 def page_topology():
     """拓扑构建与参数配置生成页面"""
-    return render_template("topology.html")
+    return render_template("topology.html", active_page="topology")
 
 
 @app.route("/features")
+@login_required
 def page_features():
     """特性向导式配置生成页面"""
-    return render_template("features.html")
+    return render_template("features.html", active_page="features")
 
 
 # ==========================================================
-# API 路由：设备管理 (Device APIs)
+# API 路由：用户认证与会话管理 (Auth APIs)
+# ==========================================================
+
+@app.route("/api/auth/login", methods=["POST"])
+def api_auth_login():
+    """用户安全登录认证"""
+    data = request.get_json(silent=True) or {}
+    username = (data.get("username") or "").strip()
+    password = data.get("password") or ""
+
+    user_info = auth_manager.authenticate(username, password)
+    if not user_info:
+        return jsonify({"success": False, "error": "用户名或密码错误"}), 401
+
+    session["user"] = user_info
+    token = auth_manager.generate_token(user_info)
+    job_logger.log_job(
+        job_type="用户鉴权登录",
+        target_devices="System",
+        status="success",
+        summary=f"用户 [{username}] 登录系统 (角色: {user_info['role']})",
+    )
+    return jsonify({"success": True, "message": "登录认证成功", "token": token, "user": user_info})
+
+
+@app.route("/api/auth/logout", methods=["POST"])
+def api_auth_logout():
+    """退出系统登录"""
+    session.pop("user", None)
+    return jsonify({"success": True, "message": "已安全退出系统"})
+
+
+@app.route("/api/auth/me", methods=["GET"])
+def api_auth_me():
+    """获取当前登录用户信息与角色权限"""
+    user = get_current_user()
+    if not user:
+        return jsonify({"success": False, "error": "未登录", "code": 401}), 401
+    return jsonify({"success": True, "user": user})
+
+
+# ==========================================================
+# API 路由：设备管理 (Device APIs) - 严格实施凭据脱敏与角色控制
 # ==========================================================
 
 @app.route("/api/devices", methods=["GET"])
+@login_required
 def api_list_devices():
-    """获取所有设备列表"""
+    """获取所有设备列表 (已执行严格口令脱敏，绝不向接口暴露口令明文)"""
     devices = load_devices()
-    return jsonify({"success": True, "devices": devices})
+    return jsonify({"success": True, "devices": mask_device_list(devices)})
+
+
+@app.route("/api/devices/<name>", methods=["GET"])
+@login_required
+def api_get_device(name: str):
+    """获取指定设备详情 (口令脱敏)"""
+    dev = get_device_by_name(name)
+    if not dev:
+        return jsonify({"success": False, "error": f"设备 '{name}' 不存在"}), 404
+    return jsonify({"success": True, "device": mask_device(dev)})
 
 
 @app.route("/api/devices", methods=["POST"])
+@login_required
+@roles_accepted("admin")
 def api_add_device():
-    """添加新设备"""
+    """添加新设备 (仅超级管理员 admin 可操作)"""
     new_device = request.get_json(silent=True) or {}
     name = new_device.get("name", "").strip()
 
@@ -224,14 +331,16 @@ def api_add_device():
 
     devices.append(new_device)
     if save_devices(devices):
-        return jsonify({"success": True, "message": "设备添加成功", "device": new_device})
+        return jsonify({"success": True, "message": "设备添加成功", "device": mask_device(new_device)})
     else:
         return jsonify({"success": False, "error": "保存设备文件失败"}), 500
 
 
 @app.route("/api/devices/<name>", methods=["PUT"])
+@login_required
+@roles_accepted("admin")
 def api_update_device(name: str):
-    """更新指定设备信息"""
+    """更新指定设备信息 (仅超级管理员 admin 可操作)"""
     update_data = request.get_json(silent=True) or {}
     devices = load_devices()
     target_idx = None
@@ -244,17 +353,24 @@ def api_update_device(name: str):
     if target_idx is None:
         return jsonify({"success": False, "error": f"未找到设备 '{name}'"}), 404
 
+    # 若更新数据中口令为空或为安全占位符，保持原口令不变
+    pwd = update_data.get("password")
+    if not pwd or str(pwd).startswith("●●●●●●") or str(pwd) == "******":
+        update_data["password"] = devices[target_idx].get("password")
+
     # 保持或更新设备属性
     devices[target_idx].update(update_data)
     if save_devices(devices):
-        return jsonify({"success": True, "message": "设备更新成功", "device": devices[target_idx]})
+        return jsonify({"success": True, "message": "设备更新成功", "device": mask_device(devices[target_idx])})
     else:
         return jsonify({"success": False, "error": "保存设备更新失败"}), 500
 
 
 @app.route("/api/devices/<name>", methods=["DELETE"])
+@login_required
+@roles_accepted("admin")
 def api_delete_device(name: str):
-    """删除指定设备"""
+    """删除指定设备 (仅超级管理员 admin 可操作)"""
     devices = load_devices()
     new_devices = [d for d in devices if d.get("name") != name]
 
@@ -358,6 +474,8 @@ def api_import_devices():
 
 @app.route("/api/configure/execute", methods=["POST"])
 @app.route("/api/configure/direct", methods=["POST"])
+@login_required
+@roles_accepted("admin", "operator")
 def api_configure_execute():
     """
     在选定设备上批量执行命令（含高危命令防呆拦截与作业审计）
@@ -378,17 +496,32 @@ def api_configure_execute():
     if isinstance(commands, str):
         commands = [c.strip() for c in commands.splitlines() if c.strip()]
 
-    # Sprint 4: 高危命令防呆预审拦截
+    # Sprint 4 & Sprint 6 (P0): 统一入口高危防呆预审
     guard_res = risk_guard.inspect_commands(commands)
-    if not guard_res["passed"] and not force_override:
-        return jsonify({
-            "success": False,
-            "guardrail_triggered": True,
-            "risk_level": guard_res["risk_level"],
-            "finding_count": guard_res["finding_count"],
-            "findings": guard_res["findings"],
-            "error": f"防呆防火墙拦截：检测到 {guard_res['finding_count']} 条高危指令，请确认风险后再强制执行",
-        })
+    user = get_current_user() or {}
+    is_admin = user.get("role") == "admin"
+
+    if not guard_res["passed"]:
+        # 非 admin 角色严禁通过 force_override 绕过高危拦截，强制生成工单
+        if not is_admin or not force_override:
+            # 自动生成审批工单
+            ticket_id = change_manager.create_ticket(
+                title=f"批量CLI直接下发高危拦截 - {len(device_names)}台",
+                applicant=user.get("username", "operator"),
+                target_devices=device_names,
+                commands_dict={d: "\n".join(commands) for d in device_names},
+                risk_result=guard_res,
+            )
+            return jsonify({
+                "success": False,
+                "guardrail_triggered": True,
+                "requires_approval": True,
+                "ticket_id": ticket_id,
+                "risk_level": guard_res["risk_level"],
+                "finding_count": guard_res["finding_count"],
+                "findings": guard_res["findings"],
+                "error": f"防呆防火墙拦截：检测到 {guard_res['finding_count']} 条高危指令，已自动生成审批工单 [{ticket_id}]，需管理员审批放行！",
+            })
 
     all_devices = load_devices()
     dev_map = {d.get("name"): d for d in all_devices}
@@ -403,7 +536,7 @@ def api_configure_execute():
         job_type="批量CLI直接下发",
         target_devices=device_names,
         status="success" if ok_cnt == len(results) else ("warning" if ok_cnt > 0 else "failed"),
-        summary=f"批量下发 {len(commands)} 行命令至 {len(results)} 台设备 (成功 {ok_cnt} 台)",
+        summary=f"批量下发 {len(commands)} 行命令至 {len(results)} 台设备 (成功 {ok_cnt} 台)" + (" [管理员强制放行]" if force_override else ""),
         cli_config="\n".join(commands),
         details=results,
     )
@@ -412,9 +545,11 @@ def api_configure_execute():
 
 @app.route("/api/configure/execute-template", methods=["POST"])
 @app.route("/api/configure/template", methods=["POST"])
+@login_required
+@roles_accepted("admin", "operator")
 def api_configure_execute_template():
     """
-    基于模板在选定设备上批量渲染并下发配置
+    基于模板在选定设备上批量渲染并下发配置 (接入统一风险防呆网关)
     Body: {device_names: [], template_name: str, variables: dict}
     """
     data = request.get_json(silent=True) or {}
@@ -442,12 +577,169 @@ def api_configure_execute_template():
 
     commands = [line.strip() for line in rendered_config.splitlines() if line.strip()]
 
+    # Sprint 6 (P0): 模板下发强制接入统一高危防呆扫描
+    guard_res = risk_guard.inspect_commands(commands)
+    user = get_current_user() or {}
+    is_admin = user.get("role") == "admin"
+    force_override = bool(data.get("force_override", False))
+
+    if not guard_res["passed"] and (not is_admin or not force_override):
+        ticket_id = change_manager.create_ticket(
+            title=f"模板 [{template_name}] 下发高危拦截",
+            applicant=user.get("username", "operator"),
+            target_devices=device_names,
+            commands_dict={d: rendered_config for d in device_names},
+            risk_result=guard_res,
+        )
+        return jsonify({
+            "success": False,
+            "guardrail_triggered": True,
+            "requires_approval": True,
+            "ticket_id": ticket_id,
+            "risk_level": guard_res["risk_level"],
+            "findings": guard_res["findings"],
+            "error": f"防呆防火墙拦截：模板中包含 {guard_res['finding_count']} 条高危指令，已自动生成工单 [{ticket_id}] 待管理员审批！",
+        })
+
     all_devices = load_devices()
     dev_map = {d.get("name"): d for d in all_devices}
     target_devices = [dev_map[name] for name in device_names if name in dev_map]
 
     if not target_devices:
         return jsonify({"success": False, "error": "未匹配到任何有效目标设备"}), 404
+
+    results = device_manager.batch_execute(target_devices, commands)
+    return jsonify({
+        "success": True,
+        "results": results,
+        "guardrail": guard_res,
+        "rendered_config": rendered_config
+    })
+
+
+# ==========================================================
+# API 路由：统一变更护栏、审批工作流与金丝雀灰度 (Change Pipeline APIs - Sprint 6)
+# ==========================================================
+
+@app.route("/api/change/plan", methods=["POST"])
+@login_required
+def api_change_plan():
+    """统一变更风险评估与自动审批工单派发接口"""
+    data = request.get_json(silent=True) or {}
+    title = data.get("title") or "未命名网络批量变更"
+    target_devices = data.get("target_devices") or data.get("device_names") or []
+    commands_dict = data.get("commands_dict") or {}
+    undo_commands_dict = data.get("undo_commands_dict") or {}
+
+    raw_cmds = data.get("commands") or data.get("cli_config")
+    if raw_cmds and not commands_dict:
+        cmd_str = "\n".join(raw_cmds) if isinstance(raw_cmds, list) else str(raw_cmds)
+        commands_dict = {d: cmd_str for d in target_devices}
+
+    if not target_devices:
+        return jsonify({"success": False, "error": "请至少指定一台目标设备"}), 400
+
+    risk_eval = change_manager.evaluate_change_risk(commands_dict)
+    user = get_current_user() or {}
+    applicant = user.get("username", "operator")
+
+    ticket_id = change_manager.create_ticket(
+        title=title,
+        applicant=applicant,
+        target_devices=target_devices,
+        commands_dict=commands_dict,
+        undo_commands_dict=undo_commands_dict,
+        risk_result=risk_eval
+    )
+
+    ticket = change_manager.get_ticket(ticket_id)
+    requires_approval = ticket["status"] == "PENDING_APPROVAL"
+
+    return jsonify({
+        "success": True,
+        "ticket_id": ticket_id,
+        "requires_approval": requires_approval,
+        "status": ticket["status"],
+        "risk_level": risk_eval.get("risk_level", "safe"),
+        "findings": risk_eval.get("findings", []),
+        "message": "检测到高危指令，已自动拦截并生成审批工单，需管理员审批通过后方可执行！" if requires_approval else "风险评估通过，可直接下发执行"
+    })
+
+
+@app.route("/api/change/tickets", methods=["GET"])
+@login_required
+def api_list_change_tickets():
+    """获取所有变更审批工单"""
+    status = request.args.get("status")
+    tickets = change_manager.list_tickets(status=status)
+    return jsonify({"success": True, "tickets": tickets})
+
+
+@app.route("/api/change/tickets/<ticket_id>", methods=["GET"])
+@login_required
+def api_get_change_ticket(ticket_id: str):
+    """获取指定工单详情"""
+    ticket = change_manager.get_ticket(ticket_id)
+    if not ticket:
+        return jsonify({"success": False, "error": f"工单 '{ticket_id}' 不存在"}), 404
+    return jsonify({"success": True, "ticket": ticket})
+
+
+@app.route("/api/change/tickets/<ticket_id>/review", methods=["POST"])
+@login_required
+@roles_accepted("admin")
+def api_review_change_ticket(ticket_id: str):
+    """管理员审批工单 (仅 admin 角色可执行)"""
+    data = request.get_json(silent=True) or {}
+    approved = bool(data.get("approved", True))
+    comment = data.get("comment", "")
+    user = get_current_user() or {}
+    reviewer = user.get("username", "admin")
+
+    success = change_manager.review_ticket(ticket_id, reviewer=reviewer, approved=approved, comment=comment)
+    if not success:
+        return jsonify({"success": False, "error": "审批失败：工单不存在或已不是待审批状态"}), 400
+
+    job_logger.log_job(
+        job_type="变更工单审批",
+        target_devices="System",
+        status="success" if approved else "warning",
+        summary=f"管理员 [{reviewer}] {'批准放行' if approved else '驳回拒绝'} 了工单 {ticket_id} (意见: {comment or '无'})",
+    )
+    return jsonify({"success": True, "message": f"工单已成功{'批准放行' if approved else '驳回'}"})
+
+
+@app.route("/api/change/tickets/<ticket_id>/execute", methods=["POST"])
+@login_required
+@roles_accepted("admin", "operator")
+def api_execute_approved_ticket(ticket_id: str):
+    """执行已审批通过的工单 (金丝雀灰度 + 报错熔断回滚)"""
+    ticket = change_manager.get_ticket(ticket_id)
+    if not ticket:
+        return jsonify({"success": False, "error": f"工单 '{ticket_id}' 不存在"}), 404
+    if ticket["status"] != "APPROVED":
+        return jsonify({"success": False, "error": f"当前工单状态为 '{ticket['status']}'，必须是 APPROVED 状态才允许下发"}), 400
+
+    data = request.get_json(silent=True) or {}
+    canary_mode = bool(data.get("canary_mode", True))
+
+    all_devices = load_devices()
+    result = change_manager.execute_canary_deployment(
+        ticket_id=ticket_id,
+        target_devices=all_devices,
+        commands_dict=ticket.get("commands", {}),
+        undo_commands_dict=ticket.get("undo_commands", {}),
+        canary_mode=canary_mode
+    )
+
+    job_logger.log_job(
+        job_type="工单金丝雀灰度下发",
+        target_devices=ticket.get("target_devices", ""),
+        status="success" if result.get("success") else "failed",
+        summary=f"工单 {ticket_id} 灰度执行{'成功' if result.get('success') else '失败触发回滚'}",
+        details=result.get("execution_results", [])
+    )
+    return jsonify({"success": result.get("success", False), "result": result})
 
     results = device_manager.batch_execute(target_devices, commands)
     return jsonify({
@@ -773,9 +1065,10 @@ def api_drift_check():
 # ==========================================================
 
 @app.route("/scan")
+@login_required
 def page_scan():
     """设备扫描页面"""
-    return render_template("scan.html")
+    return render_template("scan.html", active_page="scan")
 
 
 # ==========================================================
@@ -1328,13 +1621,15 @@ def _render_device_macros(cli_text: str, device: Dict[str, Any], seq: int) -> st
 
 
 @app.route("/api/features/deploy", methods=["POST"])
+@login_required
+@roles_accepted("admin", "operator")
 def api_features_deploy():
     """
     将特性引擎生成的配置下发给指定的目标设备列表
     支持:
     1. 多设备动态宏变量插值 ({{device.name}}, {{device.seq}}, {{device.host}})
     2. 变更前自动快照备份 (pre_backup=True)
-    3. 高危命令防呆预审拦截 (force_override=False 时自动阻断高危命令)
+    3. 高危命令防呆预审拦截与服务端审批 (force_override=False 时自动阻断高危命令)
     4. 终端 CLI 报错语义嗅探与分级统计 (clean_success / has_cli_warning / failed)
     Body: {device_names: ["RouterA"], cli_config: "system-view\n...", pre_backup: bool, force_override: bool}
     """
@@ -1349,16 +1644,27 @@ def api_features_deploy():
     if not cli_config.strip():
         return jsonify({"success": False, "error": "下发的配置内容不能为空"}), 400
 
-    # Sprint 4: 高危命令防呆预审拦截
+    # Sprint 4 & 6 (P0): 高危命令防呆预审拦截与服务端审批
     guard_res = risk_guard.inspect_commands(cli_config)
-    if not guard_res["passed"] and not force_override:
+    user = get_current_user() or {}
+    is_admin = user.get("role") == "admin"
+    if not guard_res["passed"] and (not is_admin or not force_override):
+        ticket_id = change_manager.create_ticket(
+            title=f"特性向导配置下发高危拦截 - {len(device_names)}台",
+            applicant=user.get("username", "operator"),
+            target_devices=device_names,
+            commands_dict={d: cli_config for d in device_names},
+            risk_result=guard_res,
+        )
         return jsonify({
             "success": False,
             "guardrail_triggered": True,
+            "requires_approval": True,
+            "ticket_id": ticket_id,
             "risk_level": guard_res["risk_level"],
             "finding_count": guard_res["finding_count"],
             "findings": guard_res["findings"],
-            "error": f"防呆防火墙拦截：检测到 {guard_res['finding_count']} 条高危/清理指令，请确认风险后再强制下发",
+            "error": f"防呆防火墙拦截：检测到 {guard_res['finding_count']} 条高危/清理指令，已自动生成工单 [{ticket_id}] 待管理员审批放行！",
         })
 
     all_devices = load_devices()
@@ -1429,9 +1735,10 @@ def api_features_deploy():
 # ==========================================================
 
 @app.route("/audit")
+@login_required
 def page_audit():
     """设备结构化巡检与等保三级合规审计页面"""
-    return render_template("audit.html")
+    return render_template("audit.html", active_page="audit")
 
 
 @app.route("/api/audit/evaluate", methods=["POST"])
@@ -1684,11 +1991,12 @@ def api_clear_jobs():
     return jsonify({"success": True, "message": "历史审计流水已清空"})
 
 
-# 启动时自动将 devices.yaml 中的明文密码升级为 ENC:v1 Vault 格式
+# 启动时自动将 devices.yaml 中的明文/历史密文平滑迁移升级为 Fernet ENC:v2 强加密格式
 try:
     _init_devs = load_devices()
     if _init_devs:
         save_devices(_init_devs)
+        logger.info("设备清单凭据已平滑校验并升级至 ENC:v2 Fernet 强加密保险箱格式")
 except Exception as _e:
     logger.warning(f"初始化凭据 Vault 升级跳过: {_e}")
 
@@ -1698,9 +2006,10 @@ except Exception as _e:
 # ==========================================================
 
 if __name__ == "__main__":
-    logger.info("网络批量配置管理工具正在启动...")
+    is_debug = os.environ.get("FLASK_DEBUG", "0") == "1"
+    logger.info(f"网络批量配置管理工具正在启动... (生产环境 Debug: {is_debug})")
     logger.info("监听地址: http://0.0.0.0:5000")
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=is_debug)
 
 
 

@@ -71,12 +71,34 @@
                             <i class="bi bi-cloud-download me-1"></i>备份管理
                         </a>
                     </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% if active_page == 'approvals' or request.path == '/approvals' %}active{% endif %}" href="/approvals">
+                            <i class="bi bi-patch-check me-1"></i>变更审批
+                        </a>
+                    </li>
                 </ul>
-                <div class="d-flex align-items-center gap-2 text-light-50">
+                <div class="d-flex align-items-center gap-2">
+                    <!-- 用户身份与权限胶囊 -->
+                    <div class="dropdown">
+                        <button class="btn btn-sm btn-dark border border-secondary text-white dropdown-toggle d-flex align-items-center gap-1" type="button" data-bs-toggle="dropdown">
+                            <i class="bi bi-person-circle text-primary"></i>
+                            <span class="small fw-semibold" id="navUserName">{{ session.get('user', {}).get('display_name', '系统管理员') }}</span>
+                            <span class="badge bg-primary-subtle text-primary border border-primary-subtle ms-1" style="font-size: 0.7rem;" id="navUserRole">
+                                {{ session.get('user', {}).get('role', 'admin') }}
+                            </span>
+                        </button>
+                        <ul class="dropdown-menu dropdown-menu-end shadow-sm small">
+                            <li><h6 class="dropdown-header">角色切换 / 快速调试</h6></li>
+                            <li><a class="dropdown-item" href="javascript:void(0)" onclick="quickSwitchUser('admin', 'Admin@2026!')"><i class="bi bi-person-gear text-primary me-2"></i>切换为超级管理员 (admin)</a></li>
+                            <li><a class="dropdown-item" href="javascript:void(0)" onclick="quickSwitchUser('operator', 'Operator@2026!')"><i class="bi bi-terminal text-info me-2"></i>切换为运维工程师 (operator)</a></li>
+                            <li><a class="dropdown-item" href="javascript:void(0)" onclick="quickSwitchUser('auditor', 'Auditor@2026!')"><i class="bi bi-shield-check text-warning me-2"></i>切换为等保审计员 (auditor)</a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item text-danger" href="javascript:void(0)" onclick="userLogout()"><i class="bi bi-box-arrow-right me-2"></i>安全退出登录</a></li>
+                        </ul>
+                    </div>
                     <span class="badge bg-success-subtle text-success border border-success-subtle d-flex align-items-center gap-1">
-                        <span class="status-dot bg-success"></span> 系统在线
+                        <span class="status-dot bg-success"></span> 在线
                     </span>
-                    <span class="text-secondary small d-none d-xxl-inline">支持: 华为 eNSP / 华三 HCL</span>
                 </div>
             </div>
         </div>

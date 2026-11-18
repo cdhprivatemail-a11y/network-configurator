@@ -3,7 +3,7 @@ devices:
   host: 192.168.56.101
   port: 22
   username: admin
-  password: ENC:v1:LwEZKgEuV1tU
+  password: ENC:v2:gAAAAABq_ckIMvTxyg26RG06e85uXzPYhSOxv3fqGLWDYI2v0QcJqQ_kO0R_FU9ffDs-SFh7D1P9J5EWXxXoYh5CeM3y_tpCZA==
   device_type: huawei_vrp
   description: 核心路由器
   group: Core
@@ -11,7 +11,7 @@ devices:
   host: 192.168.56.102
   port: 23
   username: admin
-  password: ENC:v1:LwEZKgEuV1tU
+  password: ENC:v2:gAAAAABq_ckIEUuM5TJz81bQbOTBKN7X7ZWzAwNPhhC0_bDmA21z31GSSKn_GBent9KoeVV4mABiiLUY_aGisJnF9uG0ct54EQ==
   device_type: huawei_vrp_telnet
   description: 接入交换机
   group: Access
@@ -19,7 +19,7 @@ devices:
   host: 192.168.56.201
   port: 22
   username: admin
-  password: ENC:v1:LwEZKgEuV1tU
+  password: ENC:v2:gAAAAABq_ckIt4n1Vcl33LH7WdYtpJT7Eb_8P8AFeMbM0dvErqfLvyOizvQ3KtRRrUEey6SMz2W0Bm8gkXipzBOfqlt_j3S5sw==
   device_type: hp_comware
   description: H3C核心路由器
   group: Core
@@ -27,7 +27,7 @@ devices:
   host: 127.0.0.1
   port: 30001
   username: admin
-  password: ENC:v1:LwEZKgEuV1tU
+  password: ENC:v2:gAAAAABq_ckIzmGamU3QU7_QDEdpkno8cLGv1ry7oTqjkqk65YssHBxUibeuNxMbBMnBOKwF5SfukJXRcfV-Se8TpqnaC0Ucgg==
   device_type: hp_comware_telnet
   group: 本地拓扑克隆
   description: 本机活动串口实况扫描 (127.0.0.1:30001-30004) 节点 (HCL-MSR3620)
@@ -35,7 +35,7 @@ devices:
   host: 127.0.0.1
   port: 30002
   username: admin
-  password: ENC:v1:LwEZKgEuV1tU
+  password: ENC:v2:gAAAAABq_ckISM8IcZq0wQgcxbYmuevk_Rj47lDukVc9WSQuyTiWpYw_YkM-uci2IJF2stsfKIkw9CuX0XvR8Qqs30Kq9kFK_g==
   device_type: hp_comware_telnet
   group: 本地拓扑克隆
   description: 本机活动串口实况扫描 (127.0.0.1:30001-30004) 节点 (HCL-MSR3620)
@@ -43,7 +43,7 @@ devices:
   host: 127.0.0.1
   port: 30003
   username: admin
-  password: ENC:v1:LwEZKgEuV1tU
+  password: ENC:v2:gAAAAABq_ckIWyB3CUGHPx-nuy5sOrRWmsxzxOPsVDSv-uTdjmTPquENlIIL-ToFDKs0JuD53NZo8OSroMr1DuvreGjQkM45Qg==
   device_type: hp_comware_telnet
   group: 本地拓扑克隆
   description: 本机活动串口实况扫描 (127.0.0.1:30001-30004) 节点 (HCL-MSR3620)
@@ -51,7 +51,7 @@ devices:
   host: 127.0.0.1
   port: 30004
   username: admin
-  password: ENC:v1:LwEZKgEuV1tU
+  password: ENC:v2:gAAAAABq_ckI11F7TLCkIeHWAZzM8-PwUgQbERt5qZgTcslsWfQxOKRbv0QgeCfChJYVnXE2o-CNJTudHbIkrame8LpFw6QguA==
   device_type: hp_comware_telnet
   group: 本地拓扑克隆
   description: 本机活动串口实况扫描 (127.0.0.1:30001-30004) 节点 (HCL-MSR3620)

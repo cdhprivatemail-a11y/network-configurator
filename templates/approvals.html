@@ -1,0 +1,373 @@
+{% extends "base.html" %}
+
+{% block title %}变更审批工单中心 - 网络批量配置器{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 mb-4">
+    <div>
+        <h3 class="fw-bold mb-1"><i class="bi bi-patch-check text-primary me-2"></i>变更审批与灰度护栏中心</h3>
+        <p class="text-secondary mb-0">全网高危操作服务端工单强制审批、金丝雀分批灰度下发与失败自动熔断回滚</p>
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+        <button class="btn btn-outline-secondary" onclick="loadTickets()">
+            <i class="bi bi-arrow-clockwise me-1"></i>刷新工单
+        </button>
+    </div>
+</div>
+
+<!-- 统计指标与筛选 -->
+<div class="row g-3 mb-4">
+    <div class="col-6 col-md-3">
+        <div class="card shadow-sm border-0 border-start border-warning border-4 p-3 bg-white">
+            <div class="small text-muted fw-semibold">待审批工单</div>
+            <div class="fs-3 fw-bold text-warning" id="countPending">0</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card shadow-sm border-0 border-start border-success border-4 p-3 bg-white">
+            <div class="small text-muted fw-semibold">已通过待执行</div>
+            <div class="fs-3 fw-bold text-success" id="countApproved">0</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card shadow-sm border-0 border-start border-primary border-4 p-3 bg-white">
+            <div class="small text-muted fw-semibold">已安全执行</div>
+            <div class="fs-3 fw-bold text-primary" id="countExecuted">0</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card shadow-sm border-0 border-start border-danger border-4 p-3 bg-white">
+            <div class="small text-muted fw-semibold">已熔断回滚 / 驳回</div>
+            <div class="fs-3 fw-bold text-danger" id="countRolledBack">0</div>
+        </div>
+    </div>
+</div>
+
+<!-- 工单列表卡片 -->
+<div class="card shadow-sm mb-4">
+    <div class="card-header bg-white py-3">
+        <div class="row g-2 align-items-center">
+            <div class="col-12 col-md-4">
+                <input type="text" id="ticketSearchInput" class="form-control" placeholder="搜索工单ID / 标题 / 设备..." oninput="filterTickets()">
+            </div>
+            <div class="col-12 col-md-3">
+                <select id="statusFilter" class="form-select" onchange="filterTickets()">
+                    <option value="">全部工单状态</option>
+                    <option value="PENDING_APPROVAL">待审批 (PENDING_APPROVAL)</option>
+                    <option value="APPROVED">已审批 (APPROVED)</option>
+                    <option value="EXECUTED">已执行 (EXECUTED)</option>
+                    <option value="ROLLED_BACK">已熔断回滚 (ROLLED_BACK)</option>
+                    <option value="REJECTED">已驳回 (REJECTED)</option>
+                </select>
+            </div>
+            <div class="col-12 col-md-auto ms-auto text-end text-muted small">
+                共 <span id="filteredTicketCount" class="fw-bold text-dark">0</span> 张工单
+            </div>
+        </div>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>工单编号 / 申请时间</th>
+                    <th>变更标题</th>
+                    <th>目标设备</th>
+                    <th>风险等级</th>
+                    <th>当前状态</th>
+                    <th>申请人 / 审批人</th>
+                    <th class="text-end">操作</th>
+                </tr>
+            </thead>
+            <tbody id="ticketTableBody">
+                <tr><td colspan="7" class="text-center py-5 text-muted"><div class="spinner-border spinner-border-sm text-primary me-2"></div>正在加载变更工单...</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- 工单详情与审批模态框 -->
+<div class="modal fade" id="ticketDetailModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header bg-light">
+                <h5 class="modal-title fw-bold" id="modalTicketTitle">工单详情</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body p-4">
+                <div class="row g-3 mb-3">
+                    <div class="col-md-6">
+                        <div class="p-3 bg-light rounded border">
+                            <div class="small text-muted">工单编号</div>
+                            <div class="fw-bold font-monospace text-dark" id="detTicketId">-</div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="p-3 bg-light rounded border">
+                            <div class="small text-muted">风险评估等级</div>
+                            <div id="detRiskBadge">-</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 风险特征清单 -->
+                <div class="mb-4" id="detRiskSection" style="display: none;">
+                    <h6 class="fw-bold text-danger"><i class="bi bi-shield-exclamation me-1"></i>高危拦截规则触发特征</h6>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-bordered small">
+                            <thead class="table-danger">
+                                <tr><th>规则ID</th><th>指令行号</th><th>拦截命令</th><th>风险原因</th></tr>
+                            </thead>
+                            <tbody id="detRiskBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- 下发与逆向回滚脚本 -->
+                <div class="row g-3 mb-4">
+                    <div class="col-md-6">
+                        <h6 class="fw-bold text-primary"><i class="bi bi-terminal me-1"></i>拟下发配置脚本 (CLI)</h6>
+                        <pre class="p-3 bg-dark text-white rounded small" style="max-height: 240px; overflow-y: auto;" id="detCommandsPre"></pre>
+                    </div>
+                    <div class="col-md-6">
+                        <h6 class="fw-bold text-warning"><i class="bi bi-arrow-counterclockwise me-1"></i>逆向回滚脚本 (Undo Rollback)</h6>
+                        <pre class="p-3 bg-dark text-warning rounded small" style="max-height: 240px; overflow-y: auto;" id="detUndoPre"></pre>
+                    </div>
+                </div>
+
+                <!-- 审批与执行回执区 -->
+                <div id="detExecutionSection" class="p-3 bg-light rounded border mb-3" style="display: none;">
+                    <h6 class="fw-bold text-dark mb-2"><i class="bi bi-activity me-1"></i>灰度执行与回滚日志</h6>
+                    <pre class="small text-muted m-0" id="detExecSummaryPre"></pre>
+                </div>
+
+                <!-- 审批表单区 (仅对 PENDING_APPROVAL 显示) -->
+                <div id="approvalActionArea" class="p-3 bg-warning bg-opacity-10 border border-warning rounded" style="display: none;">
+                    <h6 class="fw-bold text-dark mb-2"><i class="bi bi-person-check me-1"></i>管理员审批表态</h6>
+                    <div class="mb-2">
+                        <input type="text" id="reviewCommentInput" class="form-control form-control-sm" placeholder="请输入审批意见说明 (可选)">
+                    </div>
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-sm btn-success fw-semibold" onclick="submitReview(true)">
+                            <i class="bi bi-check-circle me-1"></i>同意变更申请 (Approve)
+                        </button>
+                        <button class="btn btn-sm btn-outline-danger fw-semibold" onclick="submitReview(false)">
+                            <i class="bi bi-x-circle me-1"></i>驳回变更申请 (Reject)
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer bg-light">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+                <button type="button" class="btn btn-primary" id="btnExecuteTicket" style="display: none;" onclick="executeApprovedTicket()">
+                    <i class="bi bi-play-circle me-1"></i>启动金丝雀灰度下发
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+let allTickets = [];
+let currentViewingTicket = null;
+let detailModalInstance = null;
+
+document.addEventListener('DOMContentLoaded', () => {
+    detailModalInstance = new bootstrap.Modal(document.getElementById('ticketDetailModal'));
+    loadTickets();
+});
+
+async function loadTickets() {
+    try {
+        const res = await apiCall('/api/change/tickets');
+        allTickets = Array.isArray(res) ? res : (res.tickets || []);
+        updateStats();
+        filterTickets();
+    } catch (e) {
+        showToast('加载工单列表失败: ' + e.message, 'error');
+    }
+}
+
+function updateStats() {
+    let pending = 0, approved = 0, executed = 0, rolled = 0;
+    allTickets.forEach(t => {
+        if (t.status === 'PENDING_APPROVAL') pending++;
+        else if (t.status === 'APPROVED') approved++;
+        else if (t.status === 'EXECUTED') executed++;
+        else if (t.status === 'ROLLED_BACK' || t.status === 'REJECTED') rolled++;
+    });
+    document.getElementById('countPending').textContent = pending;
+    document.getElementById('countApproved').textContent = approved;
+    document.getElementById('countExecuted').textContent = executed;
+    document.getElementById('countRolledBack').textContent = rolled;
+}
+
+function filterTickets() {
+    const q = document.getElementById('ticketSearchInput').value.toLowerCase().trim();
+    const st = document.getElementById('statusFilter').value;
+
+    const filtered = allTickets.filter(t => {
+        const matchQ = !q || (t.ticket_id && t.ticket_id.toLowerCase().includes(q)) ||
+                              (t.title && t.title.toLowerCase().includes(q)) ||
+                              (t.target_devices && t.target_devices.toLowerCase().includes(q));
+        const matchSt = !st || t.status === st;
+        return matchQ && matchSt;
+    });
+
+    document.getElementById('filteredTicketCount').textContent = filtered.length;
+    renderTicketTable(filtered);
+}
+
+function renderTicketTable(tickets) {
+    const tbody = document.getElementById('ticketTableBody');
+    if (!tickets || tickets.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center py-5 text-muted">暂无相关变更工单记录</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = tickets.map(t => {
+        const riskBadge = renderRiskBadge(t.risk_level);
+        const statusBadge = renderStatusBadge(t.status);
+        return `
+            <tr>
+                <td>
+                    <div class="fw-bold font-monospace text-dark">${escapeHtml(t.ticket_id)}</div>
+                    <div class="text-muted small">${escapeHtml(t.created_at)}</div>
+                </td>
+                <td class="fw-semibold">${escapeHtml(t.title)}</td>
+                <td><span class="badge bg-secondary-subtle text-secondary font-monospace">${escapeHtml(t.target_devices || '-')}</span></td>
+                <td>${riskBadge}</td>
+                <td>${statusBadge}</td>
+                <td>
+                    <div class="small">申请: <code>${escapeHtml(t.applicant || '-')}</code></div>
+                    ${t.reviewer ? `<div class="small text-muted">审批: <code>${escapeHtml(t.reviewer)}</code></div>` : ''}
+                </td>
+                <td class="text-end">
+                    <button class="btn btn-sm btn-outline-primary" onclick="viewTicketDetail('${escapeHtml(t.ticket_id)}')">
+                        <i class="bi bi-eye me-1"></i>详情 / 审批
+                    </button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function renderRiskBadge(r) {
+    if (r === 'critical') return '<span class="badge bg-danger">CRITICAL 致命</span>';
+    if (r === 'high') return '<span class="badge bg-warning text-dark">HIGH 高危</span>';
+    return '<span class="badge bg-success">SAFE 安全</span>';
+}
+
+function renderStatusBadge(s) {
+    if (s === 'PENDING_APPROVAL') return '<span class="badge bg-warning text-dark"><i class="bi bi-clock me-1"></i>待审批</span>';
+    if (s === 'APPROVED') return '<span class="badge bg-success"><i class="bi bi-check me-1"></i>已通过</span>';
+    if (s === 'EXECUTED') return '<span class="badge bg-primary"><i class="bi bi-check-all me-1"></i>已下发</span>';
+    if (s === 'ROLLED_BACK') return '<span class="badge bg-danger"><i class="bi bi-arrow-counterclockwise me-1"></i>已熔断回滚</span>';
+    if (s === 'REJECTED') return '<span class="badge bg-secondary"><i class="bi bi-x me-1"></i>已驳回</span>';
+    return `<span class="badge bg-light text-dark">${escapeHtml(s)}</span>`;
+}
+
+function viewTicketDetail(tid) {
+    const t = allTickets.find(x => x.ticket_id === tid);
+    if (!t) return;
+    currentViewingTicket = t;
+
+    document.getElementById('detTicketId').textContent = t.ticket_id;
+    document.getElementById('modalTicketTitle').textContent = `工单详情: ${t.title}`;
+    document.getElementById('detRiskBadge').innerHTML = renderRiskBadge(t.risk_level);
+
+    // 渲染高危特征
+    const riskSec = document.getElementById('detRiskSection');
+    const riskBody = document.getElementById('detRiskBody');
+    if (t.risk_findings && t.risk_findings.length > 0) {
+        riskSec.style.display = 'block';
+        riskBody.innerHTML = t.risk_findings.map(f => `
+            <tr>
+                <td><code>${escapeHtml(f.rule_id || '-')}</code></td>
+                <td>Line ${f.line_no || '-'}</td>
+                <td class="text-danger fw-semibold">${escapeHtml(f.command || '')}</td>
+                <td>${escapeHtml(f.reason || f.title || '')}</td>
+            </tr>
+        `).join('');
+    } else {
+        riskSec.style.display = 'none';
+    }
+
+    // CLI 命令
+    const cmdStr = typeof t.commands === 'object' ? JSON.stringify(t.commands, null, 2) : String(t.commands || '');
+    const undoStr = typeof t.undo_commands === 'object' ? JSON.stringify(t.undo_commands, null, 2) : String(t.undo_commands || '');
+    document.getElementById('detCommandsPre').textContent = cmdStr || '# 无命令';
+    document.getElementById('detUndoPre').textContent = undoStr || '# 无逆向回滚脚本';
+
+    // 执行回执
+    const execSec = document.getElementById('detExecutionSection');
+    if (t.execution_summary && Object.keys(t.execution_summary).length > 0) {
+        execSec.style.display = 'block';
+        document.getElementById('detExecSummaryPre').textContent = JSON.stringify(t.execution_summary, null, 2);
+    } else {
+        execSec.style.display = 'none';
+    }
+
+    // 审批区域与执行按钮控制
+    const approvalArea = document.getElementById('approvalActionArea');
+    const btnExec = document.getElementById('btnExecuteTicket');
+
+    if (t.status === 'PENDING_APPROVAL') {
+        approvalArea.style.display = 'block';
+        btnExec.style.display = 'none';
+    } else if (t.status === 'APPROVED') {
+        approvalArea.style.display = 'none';
+        btnExec.style.display = 'inline-block';
+    } else {
+        approvalArea.style.display = 'none';
+        btnExec.style.display = 'none';
+    }
+
+    detailModalInstance.show();
+}
+
+async function submitReview(approved) {
+    if (!currentViewingTicket) return;
+    const comment = document.getElementById('reviewCommentInput').value.trim();
+    try {
+        const res = await apiCall(`/api/change/tickets/${encodeURIComponent(currentViewingTicket.ticket_id)}/review`, 'POST', {
+            approved: approved,
+            comment: comment
+        });
+        showToast(approved ? '工单审批已放行！' : '工单已被驳回', 'success');
+        detailModalInstance.hide();
+        loadTickets();
+    } catch (e) {
+        showToast('审批失败: ' + e.message, 'error');
+    }
+}
+
+async function executeApprovedTicket() {
+    if (!currentViewingTicket) return;
+    if (!confirmAction(`确定要启动工单 [${currentViewingTicket.ticket_id}] 的金丝雀灰度下发吗？`)) return;
+
+    const btn = document.getElementById('btnExecuteTicket');
+    showLoading(btn, '金丝雀灰度下发中...');
+
+    try {
+        const res = await apiCall(`/api/change/tickets/${encodeURIComponent(currentViewingTicket.ticket_id)}/execute`, 'POST', {
+            canary_mode: true
+        });
+        if (res.success) {
+            showToast('变更金丝雀灰度全流程下发成功！', 'success');
+        } else if (res.fail_stop_triggered) {
+            showToast(`首台验证失败触发熔断！已完成逆向回滚: ${res.error}`, 'error');
+        } else {
+            showToast('下发未完全成功: ' + (res.error || '详见回执'), 'warning');
+        }
+        detailModalInstance.hide();
+        loadTickets();
+    } catch (e) {
+        showToast('执行异常: ' + e.message, 'error');
+    } finally {
+        hideLoading(btn);
+    }
+}
+</script>
+{% endblock %}

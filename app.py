@@ -1991,12 +1991,25 @@ def api_clear_jobs():
     return jsonify({"success": True, "message": "历史审计流水已清空"})
 
 
-# 启动时自动将 devices.yaml 中的明文/历史密文平滑迁移升级为 Fernet ENC:v2 强加密格式
+# 启动时若检测到明文或历史 ENC:v1 密文，自动平滑迁移升级为 Fernet ENC:v2 强加密格式
 try:
-    _init_devs = load_devices()
-    if _init_devs:
-        save_devices(_init_devs)
-        logger.info("设备清单凭据已平滑校验并升级至 ENC:v2 Fernet 强加密保险箱格式")
+    needs_upgrade = False
+    if os.path.exists(DEVICES_FILE):
+        with open(DEVICES_FILE, "r", encoding="utf-8") as _f:
+            _raw_data = yaml.safe_load(_f)
+            _raw_devs = _raw_data.get("devices", []) if isinstance(_raw_data, dict) else (_raw_data or [])
+            for _d in _raw_devs:
+                if isinstance(_d, dict):
+                    _p = str(_d.get("password") or "")
+                    _s = str(_d.get("secret") or "")
+                    if (_p and not _p.startswith("ENC:v2:")) or (_s and not _s.startswith("ENC:v2:")):
+                        needs_upgrade = True
+                        break
+    if needs_upgrade:
+        _init_devs = load_devices()
+        if _init_devs:
+            save_devices(_init_devs)
+            logger.info("设备清单凭据已平滑迁移升级至 ENC:v2 Fernet 强加密保险箱格式")
 except Exception as _e:
     logger.warning(f"初始化凭据 Vault 升级跳过: {_e}")
 
